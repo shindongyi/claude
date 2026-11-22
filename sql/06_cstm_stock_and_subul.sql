@@ -5,7 +5,7 @@
      - WM0121S 에 GOOS_CD 가 있는지 (없으면 WM0121L 기준으로 산출)
      - 집계 프로시저(SP_WMCM_CSTM_RPT_LIST_5_SUM / _8)를 기준일까지 돌린 뒤 사용하는지
      - 환급 분리 기준 컬럼 (CSTM_ITEM_CLS_CD 가정)
-     - 수불 테이블명/컬럼 (아래 SUBUL_TABLE 은 가칭)
+     - 수불 테이블: WM054L(일반상품), WM053L(GWP) — 컬럼명 확인 필요 (아래 컬럼은 가칭)
    바인드: :RUN_ID, :COMP_CD, :BASE_DT
    ===================================================================== */
 
@@ -40,10 +40,10 @@ SELECT C.BOND_GRN_CD, C.SHED_CD, SUM(C.QTY) CALC_QTY, S.CSTM_QTY, SUM(C.QTY) - S
  WHERE C.MIG_RUN_ID = :RUN_ID AND C.COMP_TYPE = 'C01'
  GROUP BY C.BOND_GRN_CD, C.SHED_CD, S.CSTM_QTY;
 
-/* ---------- C02: 수불 기말재고 (테이블명 확인 후 작성) ---------- */
+/* ---------- C02: 수불 기말재고 (WM054L 상품 / WM053L GWP, 컬럼 확인 후 작성) ---------- */
 -- INSERT INTO MIG_STOC_COMP (..., COMP_TYPE, SIGN, ...)
 -- SELECT :RUN_ID, :BASE_DT, S.COMP_CD, S.STOR_CD, S.CORN_CD, 'G'/'W', 'N', 'C02', +1, S.GOOS_CD, NULL, S.END_QTY
---   FROM SUBUL_TABLE S
+--   FROM WM054L S   -- GWP 는 WM053L, ITEM_TYPE='W'
 --  WHERE S.COMP_CD = :COMP_CD AND S.STOC_DT = :BASE_DT AND S.END_QTY <> 0;
 --  대상: 통물 상품, 본점/통물 GWP(계산재고 베이스), T1·T2 GWP(수불재고 그대로)
 
