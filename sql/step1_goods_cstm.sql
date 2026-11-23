@@ -14,7 +14,7 @@
      W 는 세관신고 상품코드가 따로 있음: CSTM_GOOS_CD = (수입 5 / 국산 6) || SUBSTR(GOOS_CD, 2)
    - 그래서 신고서 품목코드(item_code)는 GOOS_CD 가 아니라 MA9301C.CSTM_GOOS_CD
    - 순서: ① 세관재고(WM0121L) 행마다 환급코드를 먼저 붙이고 → ② 세관상품코드 단위로 집계
-   - 테이블 생성 없음. [확인] 3개 → [Detail] → [Header] → [점검] 순서로 실행
+   - 테이블 생성 없음. [확인] 4개 → [Detail] → [Header] → [점검] 순서로 실행
    - [Detail]·[Header] 는 신고 양식(SR_ItemCarryIn_D / _H) 컬럼 순서 그대로, 못 찾은 항목은 NULL
    ===================================================================== */
 
@@ -73,6 +73,32 @@ SELECT C.BOND_GRN_CD,
 
 
 
+/* ---------------------------------------------------------------------
+   [확인 4] 세관재고의 환급구분 D 가 GWP 인지 일반상품(국산)인지
+     - GWP 여부: GWP 마스터(WM0310C)에 있거나 MA9301C.GWP_YN = 'Y'
+     - D 가 전부 GWP 면 → 세관재고에 GWP 가 섞여 있는 것. 상품 기초(STEP 1)에서는 빼고 GWP 단계에서 따로
+     - D 에 일반상품이 있으면 → 상품 마이그 규칙(GOOS_TYPE_CD ≠ 1 → D, 국산 내국물품) 대로인 것
+   --------------------------------------------------------------------- */
+SELECT L.BOND_GRN_CD, L.CSTM_ITEM_CLS_CD,
+       CASE WHEN EXISTS (SELECT 1 FROM WM0310C W WHERE W.COMP_CD = '01' AND W.GOOS_CD = L.GOOS_CD)
+              OR EXISTS (SELECT 1 FROM MA9301C R WHERE R.COMP_CD = '01' AND R.GOOS_CD = L.GOOS_CD AND R.GWP_YN = 'Y')
+            THEN 'GWP' ELSE '상품' END                         AS GOOS_GWP,
+       (SELECT MAX(M.GOOS_TYPE_CD) FROM MA0040C M WHERE M.COMP_CD = '01' AND M.GOOS_CD = L.GOOS_CD) AS GOOS_TYPE_CD,
+       COUNT(DISTINCT L.GOOS_CD) GOOS_CNT,
+       SUM(NVL(L.CARI_QTY, 0) - NVL(L.TAKE_OUT_QTY, 0)) QTY
+  FROM WM0121L L
+ WHERE L.COMP_CD = '01'
+   AND L.BOND_GRN_CD IN ('01022006', '04021040', '04021041')
+   AND L.EDI_REPA_DT <= '20261130'
+ GROUP BY L.BOND_GRN_CD, L.CSTM_ITEM_CLS_CD,
+          CASE WHEN EXISTS (SELECT 1 FROM WM0310C W WHERE W.COMP_CD = '01' AND W.GOOS_CD = L.GOOS_CD)
+                 OR EXISTS (SELECT 1 FROM MA9301C R WHERE R.COMP_CD = '01' AND R.GOOS_CD = L.GOOS_CD AND R.GWP_YN = 'Y')
+               THEN 'GWP' ELSE '상품' END,
+          (SELECT MAX(M.GOOS_TYPE_CD) FROM MA0040C M WHERE M.COMP_CD = '01' AND M.GOOS_CD = L.GOOS_CD)
+ ORDER BY 1, 2, 3, 4;
+
+
+
 /* =====================================================================
    [Detail] SR_ItemCarryIn_D 양식 순서   — 못 찾은 항목은 NULL (직접 조인해서 채우기)
             양식 컬럼 뒤에 "참고" 컬럼 몇 개를 붙였음 (검토용, 적재 땐 제외)
@@ -123,6 +149,7 @@ TAGGED AS (
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
                      THEN DECODE(G.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
+           CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END GOOS_GWP,   -- [확인 4] 결과에 따라 GWP 제외
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL THEN 'W_RULE'   -- MA9301C 에 W 행 없음 → 규칙으로 생성
                 WHEN G.GOOS_CD IS NULL THEN 'NO_MASTER'                                 -- 상품마스터에 없음 (구코드)
@@ -132,16 +159,19 @@ TAGGED AS (
       LEFT JOIN MA0040C G  ON G.COMP_CD = '01' AND G.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
       LEFT JOIN REFU R     ON R.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
                           AND R.CSTM_GOODS_TYPE_CD = C.CSTM_ITEM_CLS_CD
+      LEFT JOIN (SELECT DISTINCT GOOS_CD FROM WM0310C WHERE COMP_CD = '01') W   -- GWP 마스터
+                           ON W.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
+     -- WHERE W.GOOS_CD IS NULL                    -- ← [확인 4] 에서 D 가 GWP 로 나오면 주석 해제 (상품 기초에서 GWP 제외)
 ),
 
 -- ③ 집계 : 보세구역 × 장치장 × 환급구분 × 세관상품코드
 --    (행 단위로는 음수인 코드가 있음 — 조회상 본점 W −26, T2 W −143 — 매핑 후 합치면 상쇄되는지가 핵심)
 --    합쳐도 0 이하인 것은 신고 대상 아님 → [점검]에서 확인
 AGG AS (
-    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.MATCH_BY,
+    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY,
            MAX(T.HS_CD) HS_CD, SUM(T.QTY) QTY
       FROM TAGGED T
-     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.MATCH_BY
+     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY
     HAVING SUM(T.QTY) > 0
 ),
 
@@ -192,7 +222,8 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
        X.STOR_NM                                          AS REF_STOR_NM,
        X.SHED_CD                                          AS REF_SHED_CD,
        X.GOOS_CD                                          AS REF_GOOS_CD,
-       X.MATCH_BY                                         AS REF_MATCH_BY        -- MA9301C / W_RULE / NO_TYPE / NO_MASTER(구코드)
+       X.MATCH_BY                                         AS REF_MATCH_BY,       -- MA9301C / W_RULE / NO_TYPE / NO_MASTER(구코드)
+       X.GOOS_GWP                                         AS REF_GOOS_GWP        -- 상품 / GWP
   FROM DECL X
   LEFT JOIN MA0040C M ON M.COMP_CD = '01' AND M.GOOS_CD = X.GOOS_CD        -- 상품마스터
   LEFT JOIN MA0030C B ON B.COMP_CD = M.COMP_CD AND B.BRAN_CD = M.BRAN_CD   -- 브랜드
@@ -249,6 +280,7 @@ TAGGED AS (
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
                      THEN DECODE(G.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
+           CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END GOOS_GWP,   -- [확인 4] 결과에 따라 GWP 제외
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL THEN 'W_RULE'   -- MA9301C 에 W 행 없음 → 규칙으로 생성
                 WHEN G.GOOS_CD IS NULL THEN 'NO_MASTER'                                 -- 상품마스터에 없음 (구코드)
@@ -258,16 +290,19 @@ TAGGED AS (
       LEFT JOIN MA0040C G  ON G.COMP_CD = '01' AND G.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
       LEFT JOIN REFU R     ON R.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
                           AND R.CSTM_GOODS_TYPE_CD = C.CSTM_ITEM_CLS_CD
+      LEFT JOIN (SELECT DISTINCT GOOS_CD FROM WM0310C WHERE COMP_CD = '01') W   -- GWP 마스터
+                           ON W.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
+     -- WHERE W.GOOS_CD IS NULL                    -- ← [확인 4] 에서 D 가 GWP 로 나오면 주석 해제 (상품 기초에서 GWP 제외)
 ),
 
 -- ③ 집계 : 보세구역 × 장치장 × 환급구분 × 세관상품코드
 --    (행 단위로는 음수인 코드가 있음 — 조회상 본점 W −26, T2 W −143 — 매핑 후 합치면 상쇄되는지가 핵심)
 --    합쳐도 0 이하인 것은 신고 대상 아님 → [점검]에서 확인
 AGG AS (
-    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.MATCH_BY,
+    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY,
            MAX(T.HS_CD) HS_CD, SUM(T.QTY) QTY
       FROM TAGGED T
-     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.MATCH_BY
+     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY
     HAVING SUM(T.QTY) > 0
 ),
 
