@@ -131,7 +131,7 @@ TAGGED AS (
            NVL(L.ARRV_SHED, NVL(L.ARRV_BOND, B.BOND_GRN_CD))      SHED_CD,     -- 도착장치장, 없으면 보세구역 자기 장치장
            CASE WHEN L.KIND = 'W'                     THEN 'D'                 -- GWP
                 WHEN SUBSTR(L.AGIG_CD, 6, 1) = '1'    THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'             THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'             THEN 'T'
                 WHEN G.GOOS_CD IS NULL         THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                       CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD
@@ -144,7 +144,7 @@ CODED AS (
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN T.KIND = 'W' THEN T.GOOS_CD                                          -- GWP 는 상품코드 그대로
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(T.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
+                     THEN DECODE(T.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN T.KIND = 'W' THEN 'GWP_CD'
@@ -312,7 +312,7 @@ TAGGED AS (
            NVL(L.ARRV_SHED, NVL(L.ARRV_BOND, B.BOND_GRN_CD))      SHED_CD,     -- 도착장치장, 없으면 보세구역 자기 장치장
            CASE WHEN L.KIND = 'W'                     THEN 'D'                 -- GWP
                 WHEN SUBSTR(L.AGIG_CD, 6, 1) = '1'    THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'             THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'             THEN 'T'
                 WHEN G.GOOS_CD IS NULL         THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                       CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD
@@ -325,7 +325,7 @@ CODED AS (
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN T.KIND = 'W' THEN T.GOOS_CD                                          -- GWP 는 상품코드 그대로
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(T.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
+                     THEN DECODE(T.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN T.KIND = 'W' THEN 'GWP_CD'
@@ -416,9 +416,7 @@ SELECT X.DECLARATION_NO                                        AS DECLARATION_NO
 
 -- 점검 3) "미인도 − " 가 맞는 전제 확인 : 미인도반입 물건이 세관재고(WM0121L)에 반입으로 다시 잡혔는지
 --         (반입으로 잡혔으면 Z 에서 빼고 Y 로 신고하는 게 맞음 / 안 잡혔으면 빼면 이중 차감)
-SELECT CASE WHEN EXISTS (SELECT 1 FROM WM0121L L
-                          WHERE L.COMP_CD = U.COMP_CD AND L.BILL_NO = U.BILL_NO AND NVL(L.CARI_QTY, 0) > 0)
-            THEN '세관재고 반입 있음' ELSE '세관재고 반입 없음' END AS CARI_IN_CSTM,
+SELECT CASE WHEN C.BILL_NO IS NOT NULL THEN '세관재고 반입 있음' ELSE '세관재고 반입 없음' END AS CARI_IN_CSTM,
        COUNT(*) BILL_CNT
   FROM (SELECT DISTINCT BD.COMP_CD, BD.BILL_NO
           FROM BO0110M BM, BO0110D BD, IFWM11M IM
@@ -426,7 +424,7 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM WM0121L L
            AND BM.COMP_CD = IM.COMP_CD AND BM.EDI_RPT_NO = IM.EDI_RPT_NO
            AND IM.EDI_DOC_STAT_CD = 'G1' AND BM.PMIT_CLS_CD IN ('06', '76', '86')
            AND NVL(BM.DEL_YN, 'N') = 'N' AND IM.EDI_RPT_DT <= '20261130') U
- GROUP BY CASE WHEN EXISTS (SELECT 1 FROM WM0121L L
-                             WHERE L.COMP_CD = U.COMP_CD AND L.BILL_NO = U.BILL_NO AND NVL(L.CARI_QTY, 0) > 0)
-               THEN '세관재고 반입 있음' ELSE '세관재고 반입 없음' END;
-
+  LEFT JOIN (SELECT DISTINCT COMP_CD, BILL_NO FROM WM0121L
+              WHERE COMP_CD = '01' AND NVL(CARI_QTY, 0) > 0) C
+         ON C.COMP_CD = U.COMP_CD AND C.BILL_NO = U.BILL_NO
+ GROUP BY CASE WHEN C.BILL_NO IS NOT NULL THEN '세관재고 반입 있음' ELSE '세관재고 반입 없음' END;

@@ -81,21 +81,23 @@ SELECT C.BOND_GRN_CD,
      - D 에 일반상품이 있으면 → 상품 마이그 규칙(GOOS_TYPE_CD ≠ 1 → D, 국산 내국물품) 대로인 것
    --------------------------------------------------------------------- */
 SELECT L.BOND_GRN_CD, L.CSTM_ITEM_CLS_CD,
-       CASE WHEN EXISTS (SELECT 1 FROM WM0310C W WHERE W.COMP_CD = '01' AND W.GOOS_CD = L.GOOS_CD)
-              OR EXISTS (SELECT 1 FROM MA9301C R WHERE R.COMP_CD = '01' AND R.GOOS_CD = L.GOOS_CD AND R.GWP_YN = 'Y')
-            THEN 'GWP' ELSE '상품' END                         AS GOOS_GWP,
-       (SELECT MAX(M.GOOS_TYPE_CD) FROM MA0040C M WHERE M.COMP_CD = '01' AND M.GOOS_CD = L.GOOS_CD) AS GOOS_TYPE_CD,
+       CASE WHEN W.GOOS_CD IS NOT NULL OR R.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END AS GOOS_GWP,
+       M.GOOS_TYPE_CD,
        COUNT(DISTINCT L.GOOS_CD) GOOS_CNT,
        SUM(NVL(L.CARI_QTY, 0) - NVL(L.TAKE_OUT_QTY, 0)) QTY
   FROM WM0121L L
+  LEFT JOIN (SELECT DISTINCT GOOS_CD FROM WM0310C WHERE COMP_CD = '01') W                 -- GWP 마스터
+         ON W.GOOS_CD = L.GOOS_CD
+  LEFT JOIN (SELECT DISTINCT GOOS_CD FROM MA9301C WHERE COMP_CD = '01' AND GWP_YN = 'Y') R  -- 세관신고코드 GWP
+         ON R.GOOS_CD = L.GOOS_CD
+  LEFT JOIN MA0040C M
+         ON M.COMP_CD = '01' AND M.GOOS_CD = L.GOOS_CD
  WHERE L.COMP_CD = '01'
    AND L.BOND_GRN_CD IN ('01022006', '04021040', '04021041')
    AND L.EDI_REPA_DT <= '20261130'
  GROUP BY L.BOND_GRN_CD, L.CSTM_ITEM_CLS_CD,
-          CASE WHEN EXISTS (SELECT 1 FROM WM0310C W WHERE W.COMP_CD = '01' AND W.GOOS_CD = L.GOOS_CD)
-                 OR EXISTS (SELECT 1 FROM MA9301C R WHERE R.COMP_CD = '01' AND R.GOOS_CD = L.GOOS_CD AND R.GWP_YN = 'Y')
-               THEN 'GWP' ELSE '상품' END,
-          (SELECT MAX(M.GOOS_TYPE_CD) FROM MA0040C M WHERE M.COMP_CD = '01' AND M.GOOS_CD = L.GOOS_CD)
+          CASE WHEN W.GOOS_CD IS NOT NULL OR R.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END,
+          M.GOOS_TYPE_CD
  ORDER BY 1, 2, 3, 4;
 
 
@@ -158,7 +160,7 @@ UDLV AS (
            NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
            C.GOOS_CD,
            CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
                 WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
@@ -190,7 +192,7 @@ TAGGED AS (
            C.CSTM_ITEM_CLS_CD                                      CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(G.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
+                     THEN DECODE(G.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END GOOS_GWP,   -- [확인 4] 결과에 따라 GWP 제외
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
@@ -215,7 +217,7 @@ TAGGED_ALL AS (
     SELECT 'UDLV', U.WH_CODE, U.SHED_CD, NULL, -U.QTY, U.GOOS_CD, U.CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN U.CSTM_GOODS_TYPE_CD = 'W' AND U.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(U.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
+                     THEN DECODE(U.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
            '상품', NULL
       FROM UDLV_SCOPED U
       LEFT JOIN REFU R ON R.GOOS_CD = U.GOOS_CD AND R.CSTM_GOODS_TYPE_CD = U.CSTM_GOODS_TYPE_CD
@@ -357,7 +359,7 @@ UDLV AS (
            NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
            C.GOOS_CD,
            CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
                 WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
@@ -389,7 +391,7 @@ TAGGED AS (
            C.CSTM_ITEM_CLS_CD                                      CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(G.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
+                     THEN DECODE(G.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END GOOS_GWP,   -- [확인 4] 결과에 따라 GWP 제외
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
@@ -414,7 +416,7 @@ TAGGED_ALL AS (
     SELECT 'UDLV', U.WH_CODE, U.SHED_CD, NULL, -U.QTY, U.GOOS_CD, U.CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN U.CSTM_GOODS_TYPE_CD = 'W' AND U.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(U.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
+                     THEN DECODE(U.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
            '상품', NULL
       FROM UDLV_SCOPED U
       LEFT JOIN REFU R ON R.GOOS_CD = U.GOOS_CD AND R.CSTM_GOODS_TYPE_CD = U.CSTM_GOODS_TYPE_CD

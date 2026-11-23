@@ -54,7 +54,7 @@ SELECT NVL(C.STOC_STOR_CD, A.STOC_STOR_CD) STOC_STOR_CD, NVL(C.STOC_CORN_CD, A.S
    --------------------------------------------------------------------- */
 SELECT S.REFU_CLS_CD,
        CASE WHEN SUBSTR(S.AGIG_CD, 6, 1) = '1' THEN 'W'
-            WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+            WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
             WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
             ELSE 'D' END                                   AS RULE_TYPE,
        COUNT(*) ROW_CNT, SUM(S.QTY) QTY
@@ -62,15 +62,15 @@ SELECT S.REFU_CLS_CD,
   LEFT JOIN MA0040C G ON G.COMP_CD = S.COMP_CD AND G.GOOS_CD = S.GOOS_CD
  WHERE S.COMP_CD = '01' AND S.YMON = '202610' AND S.STOR_CD IN ('05', '15', '17')
  GROUP BY S.REFU_CLS_CD,
-          CASE WHEN SUBSTR(S.AGIG_CD, 6, 1) = '1' THEN 'W' WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1' THEN 'T' WHEN G.GOOS_CD IS NULL THEN '?' ELSE 'D' END
+          CASE WHEN SUBSTR(S.AGIG_CD, 6, 1) = '1' THEN 'W' WHEN G.GOOS_TYPE_CD = '1' THEN 'T' WHEN G.GOOS_CD IS NULL THEN '?' ELSE 'D' END
  ORDER BY 1, 2;
 
 
 
 /* ---------------------------------------------------------------------
    [확인 4] 상품인데 D 로 나오는 이유 — 상품구분(GOOS_TYPE_CD) 원래 값 분포
-     - '1' 이 아니라 '01' 같은 값이면 예전엔 전부 D 로 빠졌음 (지금은 앞 0 무시하고 비교)
-     - 상품구분이 2(국산 등)면 마이그 규칙상 D (내국물품) 가 맞음
+     - 상품구분 1 → T, 2 → D (마이그 규칙), 에이징 6번째 1 → W
+     - 상품마스터에 없으면 '?' (구코드)
    --------------------------------------------------------------------- */
 SELECT G.GOOS_TYPE_CD, SUBSTR(S.AGIG_CD, 6, 1) AGIG_6TH,
        CASE WHEN G.GOOS_CD IS NULL THEN '상품마스터 없음' ELSE '있음' END MST,
@@ -176,7 +176,7 @@ UDLV AS (
            NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
            C.GOOS_CD,
            CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
                 WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
@@ -227,7 +227,7 @@ TAGGED AS (
            NVL(T.SHED_CD, '미매핑:' || X.CORN_CD)                  SHED_CD,     -- 통물 코너가 아니면 드러나게
            X.SRC, X.GOOS_CD, X.QTY,
            CASE WHEN SUBSTR(X.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
                 WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                       CSTM_GOODS_TYPE_CD,
            G.GOOS_CD                                               MST_GOOS_CD,
@@ -241,7 +241,7 @@ CODED AS (
     SELECT T.*,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(T.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
+                     THEN DECODE(T.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL THEN 'W_RULE'
@@ -428,7 +428,7 @@ UDLV AS (
            NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
            C.GOOS_CD,
            CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
                 WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
@@ -479,7 +479,7 @@ TAGGED AS (
            NVL(T.SHED_CD, '미매핑:' || X.CORN_CD)                  SHED_CD,     -- 통물 코너가 아니면 드러나게
            X.SRC, X.GOOS_CD, X.QTY,
            CASE WHEN SUBSTR(X.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
                 WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                       CSTM_GOODS_TYPE_CD,
            G.GOOS_CD                                               MST_GOOS_CD,
@@ -493,7 +493,7 @@ CODED AS (
     SELECT T.*,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(LTRIM(T.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
+                     THEN DECODE(T.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL THEN 'W_RULE'
