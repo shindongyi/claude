@@ -6,7 +6,34 @@
 - [x] **SA0109D**(매출 GWP), **WM0053L**(물류 월별수불), WM0054L(폐기신고로 보임) 명세서
 - [ ] **일별 수불 테이블**, **GWP 수불**이 어느 테이블인지 (WM0054L 은 수불이 아님)
 - [ ] `docs/01_table_spec.md` 맨 위 **컬럼/PK 확인 쿼리** 실행 결과 (사진 판독 오류 바로잡기용)
-- [ ] WM0121S 에 GOOS_CD / HS_CD 컬럼이 있는지, WM0121L·WM0121S 샘플 10행
+- [x] WM0121S 에 GOOS_CD / HS_CD 없음 확인 → 상품 단위는 WM0121L 로 산출
+- [ ] WM0121L 이력 범위 / 합계 대사 (아래 쿼리)
+```sql
+-- (1) WM0121L 이력이 언제부터 있는지, 상품코드 빈 값이 있는지
+SELECT MIN(EDI_REPA_DT) MIN_DT, MAX(EDI_REPA_DT) MAX_DT, COUNT(*) CNT,
+       COUNT(CASE WHEN GOOS_CD IS NULL THEN 1 END) NO_GOOS_CNT,
+       COUNT(DISTINCT GOOS_CD) GOOS_CNT, COUNT(DISTINCT HS_CD) HS_CNT
+  FROM WM0121L WHERE COMP_CD = '01';
+
+-- (2) 보세구역별: WM0121L 반입-반출 합계 vs WM0121S 최신 누적
+WITH L AS (
+  SELECT BOND_GRN_CD, SHED_CD, SUM(NVL(CARI_QTY,0) - NVL(TAKE_OUT_QTY,0)) L_QTY
+    FROM WM0121L WHERE COMP_CD = '01' AND EDI_REPA_DT <= :BASE_DT
+   GROUP BY BOND_GRN_CD, SHED_CD),
+S AS (
+  SELECT BOND_GRN_CD, SHED_CD, SUM(ACUM_CARI_QTY - ACUM_TAKE_OUT_QTY) S_QTY
+    FROM WM0121S
+   WHERE COMP_CD = '01'
+     AND EDI_REPA_DT = (SELECT MAX(EDI_REPA_DT) FROM WM0121S WHERE COMP_CD = '01' AND EDI_REPA_DT <= :BASE_DT)
+   GROUP BY BOND_GRN_CD, SHED_CD)
+SELECT NVL(L.BOND_GRN_CD, S.BOND_GRN_CD) BOND_GRN_CD, NVL(L.SHED_CD, S.SHED_CD) SHED_CD,
+       L.L_QTY, S.S_QTY, NVL(L.L_QTY,0) - NVL(S.S_QTY,0) DIFF
+  FROM L FULL OUTER JOIN S ON S.BOND_GRN_CD = L.BOND_GRN_CD AND S.SHED_CD = L.SHED_CD
+ ORDER BY 1, 2;
+-- 차이 0 → WM0121L 합계만으로 상품별 세관재고 산출 가능
+-- 차이 있음 → WM0121L 이력이 잘렸거나, WM0121S 가 다른 기준(수기 조정 등) → 고객 확인
+```
+- [ ] 보세구역코드(BOND_GRN_CD)·장치장(SHED_CD)이 본점/T1/T2/통물 중 어디인지 (MA041 코드 조회)
 - [ ] WM0053L 샘플 10행 + `sql/06` 의 C02 점검 쿼리 (어떤 점/코너/구분값이 있는지 → 통물 전용인지)
 
 ### A-2. 재고 귀속 위치 확인 (지난번 1·2번)
@@ -72,7 +99,7 @@ SELECT COUNT(DISTINCT A.BILL_NO) LATE_CNCL_BILLS
 | Q7 | 수불재고: **WM0053L(물류 월별수불)** 이 기준 테이블이 맞는지? QTY 가 월말재고인지 월 수불량인지? 월 단위라면 기준일이 월말이 아닐 때 쓸 **일별 수불 테이블**은? 본점·T1·T2 도 들어 있는지 | C02 추출 |
 | Q7-1 | **GWP 수불**은 어느 테이블인지 (WM0054L 은 폐기신고로 보임). GWP 재고 키는 판촉품코드(SPTM_CD)인지 상품코드(GOOS_CD)인지 | GWP 기초 |
 | Q7-2 | 재고구분(WM014)·불량구분(WM037)별 처리: 불량·폐기예정 재고도 기초에 넣는지, 재고구분별로 신규 시스템 재고유형을 나누는지 | 타겟 재고유형 |
-| Q8 | HS세관재고는 **WM0121S / WM0121L 중 무엇 기준**인지, **상품코드 단위인지 HS코드 단위인지**, 집계 프로시저(SP_WMCM_CSTM_RPT_LIST_5_SUM / _8)를 기준일로 다시 돌려야 하는지 | C01 추출 |
+| Q8 | WM0121S 는 상품코드가 없으므로 **상품별 HS세관재고는 WM0121L 의 반입−반출 합계로 산출해도 되는지?** WM0121L 에 전체 이력이 있는지(없으면 시작 잔량은 어디서?). 세관재고 쪽 **환급 구분은 무엇으로 나누는지**(WM0121L 에는 환급구분 컬럼이 없고 세관물품구분·면장구분만 있음). 집계 프로시저를 기준일로 다시 돌려야 하는지 | C01 추출 |
 | Q9 | **환급코드 분리**는 WM0053L 의 **환급구분(REFU_CLS_CD, GO407)** 기준인지? 신규 시스템에서 환급구분을 별도 상품코드로 나누는지, 재고 속성으로 두는지. 세관재고(HS) 쪽은 무엇으로 환급 여부를 나누는지 | 변환 |
 | Q10 | **구코드 정리** 매핑표 제공 (구→신, N:1 합산 허용 여부, 매핑표 관리 주체) | 변환 |
 | Q11 | 판매취소 판정 기준: 매출형태 짝(SALE_TYPE_CD) / 빌상태 08 / MK5010D 중 무엇이 기준인지 | 공통 로직 |

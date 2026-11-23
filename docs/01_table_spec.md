@@ -352,5 +352,6 @@ COMP_CD, STOR_CD, SALE_DT, POS_NO, RCPT_NO, BILL_NO, BILL_BRCD, MG_CUST_CD, MG_C
 | CARI_QTY / TAKE_OUT_QTY | 반입 / 반출 수량 |
 | ACUM_CARI_QTY / ACUM_TAKE_OUT_QTY | **누적 반입 / 누적 반출 수량** |
 
-> ⚠️ 사진상 WM0121S 에서 **GOOS_CD / HS_CD 컬럼이 보이지 않음**. "HS세관재고"가 HS코드 단위인지, 상품코드 단위인지가
-> 마이그레이션 단위를 결정하므로 최우선 확인 필요. (HS 단위라면 상품 단위로 배분할 규칙이 별도로 필요)
+> ✅ **확인됨: WM0121S 에는 GOOS_CD / HS_CD 둘 다 없음.** 보세구역·장치장·세관물품구분 단위 집계표.
+> → 상품 단위 기초재고는 **WM0121L(GOOS_CD, HS_CD 보유)** 에서 산출하고, WM0121S 는 **보세구역 단위 대사용 합계**로만 사용.
+> → 단, WM0121L 이 "신고 내역"이므로 전체 이력이 다 있어야 반입−반출 합계가 재고가 됨. 보관 기간이 잘려 있으면 시작 시점 잔량이 따로 필요.

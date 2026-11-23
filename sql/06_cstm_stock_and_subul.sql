@@ -9,7 +9,7 @@
    바인드: :RUN_ID, :COMP_CD, :BASE_DT
    ===================================================================== */
 
-/* ---------- C01: HS세관재고 (WM0121L 상세의 반입-반출 누계, 가정) ---------- */
+/* ---------- C01: HS세관재고 = WM0121L 반입-반출 누계 (WM0121S 에는 GOOS_CD/HS_CD 없음 확인 → 대사용) ---------- */
 INSERT INTO MIG_STOC_COMP
       (MIG_RUN_ID, BASE_DT, COMP_CD, STOR_CD, BOND_GRN_CD, SHED_CD, ITEM_TYPE, STOC_TYPE, COMP_TYPE, SIGN,
        GOOS_CD_ORG, REFUND_CLS, QTY)
