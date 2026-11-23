@@ -33,14 +33,17 @@ SELECT SA.COMP_CD, SA.STOR_CD, SA.SALE_DT, SA.POS_NO, SA.RCPT_NO, SA.BILL_NO,
 --   본 이행은 동결 직후 수행하므로 "기준일 이후 취소"는 존재하지 않는 것이 정상.
 --   리허설 시점과 동결 시점이 다르면 E.SALE_DT <= :BASE_DT 조건을 추가한 버전을 사용.
 
-/* GWP: SA0109D 컬럼 확인 후 아래 컬럼명 수정 (GWP_CD / GWP_QTY 는 가정) */
+/* GWP: SA0109D (판촉품). 재고 키를 GOOS_CD 로 가정 — SPTM_CD 가 맞으면 교체 (고객 확인)
+   SA0109D 에는 라인 취소/반품 컬럼이 없어 빌 단위로만 취소 판정 */
 CREATE OR REPLACE VIEW MIG_V_VALID_SALE_GWP AS
 SELECT SA.COMP_CD, SA.STOR_CD, SA.SALE_DT, SA.POS_NO, SA.RCPT_NO, SA.BILL_NO,
        SA.BILL_PROC_CLS_CD, SA.GOOS_LOC_CLS_CD,
        G.SEQ,
-       G.GWP_CD        AS GOOS_CD,     -- TODO: 실제 컬럼명
-       G.GWP_QTY       AS GOOS_QTY,    -- TODO: 실제 컬럼명
-       SA.STOC_STOR_CD, SA.STOC_CORN_CD
+       G.GOOS_CD       AS GOOS_CD,     -- 재고 키 (SPTM_CD 일 수도 있음)
+       G.SPTM_CD,                      -- 판촉품코드 (추적용)
+       G.PMNT_QTY      AS GOOS_QTY,    -- 지급수량
+       NVL(G.STOC_STOR_CD, SA.STOC_STOR_CD) AS STOC_STOR_CD,
+       NVL(G.STOC_CORN_CD, SA.STOC_CORN_CD) AS STOC_CORN_CD
   FROM SA0100M SA
   JOIN SA0109D G
     ON G.COMP_CD = SA.COMP_CD AND G.STOR_CD = SA.STOR_CD AND G.SALE_DT = SA.SALE_DT

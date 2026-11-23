@@ -17,7 +17,10 @@ CREATE TABLE MIG_STOC_COMP (
     COMP_TYPE       VARCHAR2(3)    NOT NULL,   -- C01 HS세관재고 / C02 수불기말 / C03 교환권(+) / C04 H재반입(-) / C05 미인도반입(-)
     SIGN            NUMBER(1)      NOT NULL,   -- +1 / -1
     GOOS_CD_ORG     VARCHAR2(30)   NOT NULL,   -- 원천 상품코드
-    REFUND_CLS      VARCHAR2(10),              -- 환급구분 (분리 기준값 보관)
+    REFUND_CLS      VARCHAR2(10),              -- 환급구분 (WM0053L.REFU_CLS_CD, GO407 등 분리 기준값 보관)
+    STOC_CLS_CD     VARCHAR2(10),              -- 재고구분 (WM0053L.STOC_CLS_CD, WM014)
+    FALT_CLS_CD     VARCHAR2(10),              -- 불량구분 (WM0053L.FALT_CLS_CD, WM037)
+    AGIG_CD         VARCHAR2(10),              -- 에이징코드
     GOOS_CD         VARCHAR2(30),              -- 환급분리+구코드정리 후 최종 상품코드
     QTY             NUMBER(15)     NOT NULL,
     SRC_BILL_NO     VARCHAR2(30),              -- 원천 빌번호 (빌 기반 컴포넌트)

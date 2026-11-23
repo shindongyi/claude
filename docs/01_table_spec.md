@@ -12,7 +12,7 @@ SELECT c.TABLE_NAME, c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, c.N
     ON m.OWNER = c.OWNER AND m.TABLE_NAME = c.TABLE_NAME AND m.COLUMN_NAME = c.COLUMN_NAME
  WHERE c.OWNER = 'US_OWNER'
    AND c.TABLE_NAME IN ('SA0100M','SA0103D','SA0109D','SA2000I','MA0100I','MA0150M','MA0151D',
-                        'WM054L','WM053L','BO0110M','BO0110D','IFWM11M','IFWM12M','MK5010D','WM0121L','WM0121S')
+                        'WM0053L','WM0054L','BO0110M','BO0110D','IFWM11M','IFWM12M','MK5010D','WM0121L','WM0121S')
  ORDER BY c.TABLE_NAME, c.COLUMN_ID;
 
 -- PK / UK 확인 (조인 시 중복 발생 여부 판단에 필수)
@@ -36,9 +36,9 @@ SELECT con.TABLE_NAME, con.CONSTRAINT_NAME, con.CONSTRAINT_TYPE,
 |---|---|---|
 | SA0100M | 영업_매출기본 (빌 헤더) | 교환권/판매취소 판정, 빌 상태(BO015)·상품위치(BO014) |
 | SA0103D | 영업_매출상세 (상품) | **상품 판매수량** (교환권 수량 산출) |
-| SA0109D | 영업_매출상세 (GWP) | **GWP 판매수량** — ※ 명세서 사진 없음, 별도 확인 필요 |
-| **WM054L** | 수불 (일반상품) | **통물 상품 계산재고의 베이스 (수불 기말재고)** — ※ 명세서 사진 없음 |
-| **WM053L** | 수불 (GWP) | **GWP 기초 (본점·통물 계산재고 베이스 / T1·T2 수불재고)** — ※ 명세서 사진 없음 |
+| SA0109D | 영업_매출상세 (GWP = 판촉품) | **GWP 지급수량** (PMNT_QTY) |
+| **WM0053L** | 물류 월별수불내역 (월말재고) | **수불재고 원천 후보**. 월(YMON) 단위, 환급구분·재고구분·불량구분 컬럼 보유 |
+| WM0054L | (명세상) 폐기신고 관리 | ⚠️ **수불 테이블이 아님** — 일반상품/GWP 수불 테이블 재확인 필요 |
 | SA2000I | 영업_매출기본부속정보 | 배송/멤버십 정보 (재고 계산에는 불필요) |
 | MA0100I | 마스터_점코너구역정보 | 코너 → 창고/구역 매핑 |
 | MA0150M | 공통코드 기본 (분류) | 코드 분류 정의 |
@@ -143,12 +143,51 @@ SELECT con.TABLE_NAME, con.CONSTRAINT_NAME, con.CONSTRAINT_TYPE,
 | RSVG_DOLR_AMT | NUMBER | (?)적립 달러금액 |
 | TCMP_CD | VARCHAR2 | (?)통합업체코드 |
 
-## SA0109D — 영업_매출상세(GWP)
-**명세서 사진 없음.** SA0103D와 동일 키(COMP_CD, STOR_CD, SALE_DT, POS_NO, RCPT_NO, SEQ) + GWP코드 + 수량 구조로 추정. 컬럼 확인 후 `sql/02` GWP 부분 수정 필요.
+## SA0109D — 영업_매출상세(GWP = 판촉품)
 
-## WM054L — 수불(일반상품) / WM053L — 수불(GWP)
-**명세서 사진 없음.** 확인 필요 항목: 키(점/창고·코너/상품/일자 or 월), 기말수량 컬럼, 마감 기준(일마감/월마감),
-보세구역·로케이션 단위 여부. 확인 후 `sql/06` C02 부분 작성.
+| 컬럼 | 타입 | 설명 / 코드 |
+|---|---|---|
+| COMP_CD | CHAR | 회사코드 |
+| STOR_CD, SALE_DT, POS_NO | VARCHAR2 | 점 / 매출일자 / POS번호 |
+| RCPT_NO, SEQ | NUMBER | 영수증번호 / 순번 |
+| SALE_STOR_CD | VARCHAR2 | 매출점코드 |
+| BILL_NO | VARCHAR2 | 빌번호 |
+| CORN_CD | VARCHAR2 | 코너코드 |
+| SALE_TYPE_CD | VARCHAR2 | 매출형태코드 (MA0150M, SA, SA101) |
+| BRAN_CD | VARCHAR2 | 브랜드코드 |
+| SPTM_CTG_CD | VARCHAR2 | 판촉품분류코드 |
+| **SPTM_CD / SPTM_NM** | VARCHAR2 | **판촉품코드 / 판촉품명** |
+| **STOC_STOR_CD / STOC_CORN_CD** | VARCHAR2 | **재고점 / 재고코너** (상품과 동일 구조) |
+| **PMNT_QTY** | NUMBER | **지급수량** |
+| **GOOS_CD** | VARCHAR2 | 상품코드 — ⚠️ GWP 재고 키가 SPTM_CD 인지 GOOS_CD 인지 확인 필요 |
+| SPTM_PMNT_COND_CONT | BLOB | 판촉품지급조건내용 (개인정보 포함 표기) — 이행 불필요 |
+
+- 상품(SA0103D)과 달리 **라인 취소여부/반품수량 컬럼이 없음** → GWP 취소는 빌(SA0100M) 단위로만 판정.
+
+## WM0053L — 물류 월별수불내역
+
+| 컬럼 | 타입 | 설명 / 코드 |
+|---|---|---|
+| COMP_CD | CHAR | 회사코드 |
+| STOR_CD | VARCHAR2 | 점코드 |
+| **YMON** | CHAR | **년월 (월 단위)** |
+| CORN_CD | VARCHAR2 | 코너코드 |
+| GOOS_CD | VARCHAR2 | 상품코드 |
+| AGIG_CD | VARCHAR2 | 에이징코드 |
+| **STOC_CLS_CD** | VARCHAR2 | **재고구분코드 (MA0150M, WM, WM014)** — 정상/미인도 등 구분 후보 |
+| **REFU_CLS_CD** | VARCHAR2 | **환급구분코드 (MA0150M, GO, GO407)** — 고객이 말한 "환급코드 분리"의 기준 후보 |
+| **FALT_CLS_CD** | CHAR | **불량구분코드 (MA0150M, WM, WM037)** |
+| **QTY** | NUMBER | **수량** (월말재고인지 월 수불량인지 확인 필요) |
+| STOC_COST_DOLR_AMT / STOC_COST_WON_AMT | NUMBER | 재고원가 달러 / 원화금액 |
+
+- **월 단위**라서 기준일이 월말이 아니면 "전월말 재고 + 당월 일별 수불"이 필요 → 일별 수불 테이블 확인 필요.
+- "물류" 월별수불 → 통합물류 전용인지, 본점·T1·T2 도 들어 있는지 확인 필요 (GWP 수불재고는 T1·T2 에도 필요).
+
+## WM0054L — 폐기신고 (명세상 추정)
+EDI_MNGE_NO(EDI관리번호), RPT_MNGE_NO(신고관리번호), PMIT_CLS_CD(면장구분 WM038), DEPA_TRPL_CD/ARRV_TRPL_CD(출발/도착 운송지),
+RPT_DT/RPT_USR_ID/RPT_USR_NM(신고일자/신고자), TRAN_END_DT, FIX_YN/DEL_YN/RPT_YN, EDI_RPT_NO/EDI_REF_NO,
+**DISU_PLAC_NM(폐기장소명), DISU_METH_CONT(폐기방법내용), DISU_EXPT_DT(폐기예정일자)**, INFC_ID.
+→ 상품코드·수량이 없는 **폐기 신고 헤더**로 보임. 수불 테이블이 아님. (폐기 예정 재고를 기초에서 제외해야 하는지는 고객 확인)
 
 ## SA2000I — 영업_매출기본부속정보
 COMP_CD, STOR_CD, SALE_DT, POS_NO, RCPT_NO, BILL_NO, BILL_BRCD, MG_CUST_CD, MG_CUST_RQMT_NO(?), NEW_CUST_TYPE_CD(신규고객유형), MG_ADDR_SEQ(MG주소순번), DELV_ADDR_1/2(배송주소), MBS_CD(멤버십코드), MBS_LVL_TYPE_CD, MBS_LVL_CD.

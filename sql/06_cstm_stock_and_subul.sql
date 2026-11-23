@@ -5,7 +5,7 @@
      - WM0121S 에 GOOS_CD 가 있는지 (없으면 WM0121L 기준으로 산출)
      - 집계 프로시저(SP_WMCM_CSTM_RPT_LIST_5_SUM / _8)를 기준일까지 돌린 뒤 사용하는지
      - 환급 분리 기준 컬럼 (CSTM_ITEM_CLS_CD 가정)
-     - 수불 테이블: WM054L(일반상품), WM053L(GWP) — 컬럼명 확인 필요 (아래 컬럼은 가칭)
+     - 수불: WM0053L(물류 월별수불내역, 월 단위). WM0054L 은 폐기신고로 보여 수불 아님 → 일반상품/GWP·일별 수불 테이블 재확인
    바인드: :RUN_ID, :COMP_CD, :BASE_DT
    ===================================================================== */
 
@@ -40,12 +40,34 @@ SELECT C.BOND_GRN_CD, C.SHED_CD, SUM(C.QTY) CALC_QTY, S.CSTM_QTY, SUM(C.QTY) - S
  WHERE C.MIG_RUN_ID = :RUN_ID AND C.COMP_TYPE = 'C01'
  GROUP BY C.BOND_GRN_CD, C.SHED_CD, S.CSTM_QTY;
 
-/* ---------- C02: 수불 기말재고 (WM054L 상품 / WM053L GWP, 컬럼 확인 후 작성) ---------- */
--- INSERT INTO MIG_STOC_COMP (..., COMP_TYPE, SIGN, ...)
--- SELECT :RUN_ID, :BASE_DT, S.COMP_CD, S.STOR_CD, S.CORN_CD, 'G'/'W', 'N', 'C02', +1, S.GOOS_CD, NULL, S.END_QTY
---   FROM WM054L S   -- GWP 는 WM053L, ITEM_TYPE='W'
---  WHERE S.COMP_CD = :COMP_CD AND S.STOC_DT = :BASE_DT AND S.END_QTY <> 0;
---  대상: 통물 상품, 본점/통물 GWP(계산재고 베이스), T1·T2 GWP(수불재고 그대로)
+/* ---------- C02: 수불재고 (WM0053L 물류 월별수불내역) ----------
+   가정: QTY = 해당 월(YMON) 말 재고수량, 기준일 = 월말
+   - 기준일이 월말이 아니면: 전월 YMON 재고 + 당월 1일~기준일 일별 수불 (일별 수불 테이블 확인 후 추가)
+   - 상품/GWP 구분 방법 미확인: 상품마스터의 상품유형(GOOS_TYPE_CD) 등으로 ITEM_TYPE 판정 필요 → 아래는 MIG_MAP_ITEM_TYPE 가정
+   - 대상: 통물 상품, 본점/통물 GWP(계산재고 베이스), T1·T2 GWP(수불재고 그대로)                     */
+INSERT INTO MIG_STOC_COMP
+      (MIG_RUN_ID, BASE_DT, COMP_CD, STOR_CD, CORN_CD, ITEM_TYPE, STOC_TYPE, COMP_TYPE, SIGN,
+       GOOS_CD_ORG, REFUND_CLS, STOC_CLS_CD, FALT_CLS_CD, AGIG_CD, QTY, SRC_KEY)
+SELECT :RUN_ID, :BASE_DT, S.COMP_CD, S.STOR_CD, S.CORN_CD,
+       NVL(T.ITEM_TYPE, 'G'),                         -- TODO: 상품/GWP 판정 기준 확인
+       'N',                                           -- TODO: STOC_CLS_CD(WM014) 값별 정상/미인도 매핑
+       'C02', +1,
+       S.GOOS_CD, S.REFU_CLS_CD, S.STOC_CLS_CD, S.FALT_CLS_CD, S.AGIG_CD,
+       S.QTY,
+       S.YMON
+  FROM WM0053L S
+  LEFT JOIN MIG_MAP_ITEM_TYPE T ON T.GOOS_CD = S.GOOS_CD   -- 가칭: 상품코드 → G/W
+ WHERE S.COMP_CD = :COMP_CD
+   AND S.YMON = SUBSTR(:BASE_DT, 1, 6)
+   AND S.QTY <> 0;
+
+-- C02 점검: 월별수불에 어떤 점/코너/구분값이 들어 있는지 (통물 전용인지 확인)
+SELECT STOR_CD, CORN_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD,
+       COUNT(*) ROW_CNT, COUNT(DISTINCT GOOS_CD) GOOS_CNT, SUM(QTY) QTY
+  FROM WM0053L
+ WHERE COMP_CD = :COMP_CD AND YMON = :YMON
+ GROUP BY STOR_CD, CORN_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD
+ ORDER BY 1, 2, 3, 4, 5;
 
 /* ---------- 변환 1: 환급코드 분리 (집계 전, REFUND_CLS 보존 상태에서) ---------- */
 UPDATE MIG_STOC_COMP C
