@@ -124,7 +124,7 @@ CSTM AS (
      WHERE L.COMP_CD = P.COMP_CD
        AND L.BOND_GRN_CD IN (SELECT BOND_GRN_CD FROM BOND)
        AND L.EDI_REPA_DT <= P.BASE_DT
-       -- AND L.SHED_CD = L.BOND_GRN_CD          -- 자기 장치장만 (통물 장치장 04077090/04077137 제외할 때)
+       AND L.SHED_CD = L.BOND_GRN_CD             -- 자기 장치장만. 통물 장치장(04077090/04077137)은 STEP 2·3 계산재고로 → 한 TEMP 에 합칠 때 이중 계상 방지
      GROUP BY L.BOND_GRN_CD, L.SHED_CD, L.GOOS_CD, L.CSTM_GOOS_CD, L.HS_CD, L.CSTM_ITEM_CLS_CD
 ),
 
@@ -315,7 +315,7 @@ CSTM AS (
      WHERE L.COMP_CD = P.COMP_CD
        AND L.BOND_GRN_CD IN (SELECT BOND_GRN_CD FROM BOND)
        AND L.EDI_REPA_DT <= P.BASE_DT
-       -- AND L.SHED_CD = L.BOND_GRN_CD          -- 자기 장치장만 (통물 장치장 04077090/04077137 제외할 때)
+       AND L.SHED_CD = L.BOND_GRN_CD             -- 자기 장치장만. 통물 장치장(04077090/04077137)은 STEP 2·3 계산재고로 → 한 TEMP 에 합칠 때 이중 계상 방지
      GROUP BY L.BOND_GRN_CD, L.SHED_CD, L.GOOS_CD, L.CSTM_GOOS_CD, L.HS_CD, L.CSTM_ITEM_CLS_CD
 ),
 

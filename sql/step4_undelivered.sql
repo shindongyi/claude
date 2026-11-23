@@ -398,3 +398,20 @@ SELECT X.DECLARATION_NO                                        AS DECLARATION_NO
 --   SELECT WH_CODE, REF_SHED_CD, ITEM_TYPE, ITEM_CODE, SUM(ITEM_QTY) UDLV_QTY
 --     FROM ( < Detail 쿼리 > )
 --    GROUP BY WH_CODE, REF_SHED_CD, ITEM_TYPE, ITEM_CODE;
+
+-- 점검 3) "미인도 − " 가 맞는 전제 확인 : 미인도반입 물건이 세관재고(WM0121L)에 반입으로 다시 잡혔는지
+--         (반입으로 잡혔으면 Z 에서 빼고 Y 로 신고하는 게 맞음 / 안 잡혔으면 빼면 이중 차감)
+SELECT CASE WHEN EXISTS (SELECT 1 FROM WM0121L L
+                          WHERE L.COMP_CD = U.COMP_CD AND L.BILL_NO = U.BILL_NO AND NVL(L.CARI_QTY, 0) > 0)
+            THEN '세관재고 반입 있음' ELSE '세관재고 반입 없음' END AS CARI_IN_CSTM,
+       COUNT(*) BILL_CNT
+  FROM (SELECT DISTINCT BD.COMP_CD, BD.BILL_NO
+          FROM BO0110M BM, BO0110D BD, IFWM11M IM
+         WHERE BM.COMP_CD = BD.COMP_CD AND BM.STOR_CD = BD.STOR_CD AND BM.BOND_TRAN_MNGE_NO = BD.BOND_TRAN_MNGE_NO
+           AND BM.COMP_CD = IM.COMP_CD AND BM.EDI_RPT_NO = IM.EDI_RPT_NO
+           AND IM.EDI_DOC_STAT_CD = 'G1' AND BM.PMIT_CLS_CD IN ('06', '76', '86')
+           AND NVL(BM.DEL_YN, 'N') = 'N' AND IM.EDI_RPT_DT <= '20261130') U
+ GROUP BY CASE WHEN EXISTS (SELECT 1 FROM WM0121L L
+                             WHERE L.COMP_CD = U.COMP_CD AND L.BILL_NO = U.BILL_NO AND NVL(L.CARI_QTY, 0) > 0)
+               THEN '세관재고 반입 있음' ELSE '세관재고 반입 없음' END;
+
