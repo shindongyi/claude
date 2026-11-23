@@ -56,11 +56,55 @@ CREATE TABLE MIG_MAP_CSTM_OFFICE (
     DEPT_CD   VARCHAR2(2) NOT NULL                -- 과코드
 );
 
-/* 상품 정보 뷰 — 상품마스터 테이블 확인 후 작성 (가칭 GOODS_MASTER) */
--- CREATE OR REPLACE VIEW MIG_V_GOOS_INFO AS
--- SELECT GOOS_CD, HS_CD, GOOS_NM, GOOS_NORM, BRAN_CD, BRAN_NM, SALE_DOLR_UCST, SALE_WON_UCST,
---        CAPACITY, CAPA_UNIT_CD, QTY_UNIT_CD, GWP_GRADE
---   FROM GOODS_MASTER;
+/* 상품 정보 뷰 — 상품: MA0040C(상품마스터) / GWP: WM0310C(GWP 마스터)
+   ※ 두 테이블 컬럼은 아직 미확인 → 아래 "컬럼 확인" 쿼리 결과로 오른쪽 컬럼명 교체 (TODO 표시)
+   ※ 신고 필수: HS코드, 품명, 규격, 브랜드코드·명, 판매가(USD), 수량단위                          */
+
+-- 컬럼 확인 (결과를 캡처해서 공유)
+SELECT c.TABLE_NAME, c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, m.COMMENTS
+  FROM ALL_TAB_COLUMNS c
+  LEFT JOIN ALL_COL_COMMENTS m ON m.OWNER = c.OWNER AND m.TABLE_NAME = c.TABLE_NAME AND m.COLUMN_NAME = c.COLUMN_NAME
+ WHERE c.OWNER = 'US_OWNER' AND c.TABLE_NAME IN ('MA0040C', 'WM0310C')
+ ORDER BY c.TABLE_NAME, c.COLUMN_ID;
+
+-- 매출 상품코드가 마스터에 있는지 (GWP 키가 GOOS_CD 로 붙는지도 여기서 확인)
+SELECT 'GOODS' GBN, COUNT(DISTINCT D.GOOS_CD) SALE_CODES,
+       COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM MA0040C M WHERE M.COMP_CD = D.COMP_CD AND M.GOOS_CD = D.GOOS_CD)
+                           THEN D.GOOS_CD END) IN_MASTER
+  FROM SA0103D D WHERE D.COMP_CD = '01' AND D.SALE_DT LIKE '202610%'
+UNION ALL
+SELECT 'GWP', COUNT(DISTINCT G.GOOS_CD),
+       COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM WM0310C W WHERE W.COMP_CD = G.COMP_CD AND W.GOOS_CD = G.GOOS_CD)
+                           THEN G.GOOS_CD END)
+  FROM SA0109D G WHERE G.COMP_CD = '01' AND G.SALE_DT LIKE '202610%';
+-- ※ WM0310C 키가 GOOS_CD 가 아니라 SPTM_CD(판촉품코드)면 위 GWP 줄을 G.SPTM_CD 로 바꿔서 비교
+
+CREATE OR REPLACE VIEW MIG_V_GOOS_INFO AS
+SELECT 'G' KIND, M.GOOS_CD,
+       M.HS_CD          AS HS_CD,           -- TODO 컬럼명 확인
+       M.GOOS_NM        AS GOOS_NM,         -- TODO
+       M.GOOS_NORM      AS GOOS_NORM,       -- TODO 규격
+       M.BRAN_CD        AS BRAN_CD,
+       B.BRAN_NM        AS BRAN_NM,         -- TODO 브랜드명은 브랜드 마스터에서?
+       M.SALE_DOLR_UCST AS SALE_DOLR_UCST,  -- TODO 판매가(USD) — 기준일 시점 가격인지 확인
+       M.SALE_WON_UCST  AS SALE_WON_UCST,   -- TODO
+       M.CAPACITY       AS CAPACITY,        -- TODO 용량
+       M.CAPA_UNIT_CD   AS CAPA_UNIT_CD,    -- TODO 용량단위
+       M.QTY_UNIT_CD    AS QTY_UNIT_CD,     -- TODO 수량단위
+       CAST(NULL AS CHAR(1)) AS GWP_GRADE
+  FROM MA0040C M
+  LEFT JOIN BRAND_MASTER B ON B.COMP_CD = M.COMP_CD AND B.BRAN_CD = M.BRAN_CD   -- TODO 브랜드 마스터 테이블명
+ WHERE M.COMP_CD = '01'
+UNION ALL
+SELECT 'W', W.GOOS_CD,
+       W.HS_CD, W.GOOS_NM, W.GOOS_NORM, W.BRAN_CD, B.BRAN_NM,
+       0, 0,                                -- GWP 단가 0 가능
+       W.CAPACITY, W.CAPA_UNIT_CD, W.QTY_UNIT_CD,
+       W.GWP_GRADE                          -- TODO GWP 물품등급
+  FROM WM0310C W
+  LEFT JOIN BRAND_MASTER B ON B.COMP_CD = W.COMP_CD AND B.BRAN_CD = W.BRAN_CD
+ WHERE W.COMP_CD = '01';
+-- 같은 GOOS_CD 가 상품·GWP 양쪽에 있으면 조인 시 중복 → 08 의 Detail 조인에 KIND 조건 추가 (W.ITEM_TYPE 'G'/'W' = KIND)
 
 /* 1) 신고 단위(Header) 와 품목 순번(Detail) 배정: (보세구역, 장치장, 신고구분) 별로 9999 품목씩 */
 -- (CTAS 에는 바인드 변수를 쓸 수 없어서 구조만 만들고 INSERT)
@@ -115,7 +159,7 @@ SELECT :RUN_ID, W.DECLARATION_NO, W.WH_CODE, 'DLG', W.DOC_SEQ,
        CASE W.ITEM_TYPE WHEN 'W' THEN 0 ELSE G.SALE_WON_UCST END,
        G.QTY_UNIT_CD
   FROM MIG_DECL_WORK W
-  JOIN MIG_V_GOOS_INFO G ON G.GOOS_CD = W.GOOS_CD;
+  JOIN MIG_V_GOOS_INFO G ON G.GOOS_CD = W.GOOS_CD AND G.KIND = W.ITEM_TYPE;
 
 /* 4) 검증 */
 -- 필수값 누락 (상품정보 미존재 → Detail 에서 빠짐)
