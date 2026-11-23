@@ -105,10 +105,13 @@ SELECT L.BOND_GRN_CD, L.CSTM_ITEM_CLS_CD,
    ===================================================================== */
 WITH
 PRM AS (SELECT '01' COMP_CD, '20261130' BASE_DT, '20261201' DECL_DT FROM DUAL),   -- 기준일 / 신고일자
-BOND AS (                                    -- 점 ↔ 보세구역 + 신고번호 재료 (??? 는 고객 확인 후 채움)
-    SELECT '05' STOR_CD, '본점'   STOR_NM, '01022006' BOND_GRN_CD, '???' CSTM_CD, '??' DEPT_CD, '?' SEQ_PREFIX FROM DUAL UNION ALL
-    SELECT '15',         'T1-DF4',         '04021040',             '???',          '??',         '?'            FROM DUAL UNION ALL
-    SELECT '17',         'T2-DF4',         '04021041',             '???',          '??',         '?'            FROM DUAL
+BOND AS (                                    -- 점 ↔ 보세구역 + 신고번호 재료
+    -- 세관코드(CSTM_CD): 고객 확인 (05 → 010, 15·17 → 040)
+    -- 과코드(DEPT_CD)  : 보세구역코드 4~5번째 자리로 추정 (01022006 → 22, 04021040 → 21)  ※ 확인 필요
+    -- 일련번호 접두문자 : 미정 '?'
+    SELECT '05' STOR_CD, '본점'   STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX FROM DUAL UNION ALL
+    SELECT '15',         'T1-DF4',         '04021040',             '040',          '21',         '?'            FROM DUAL UNION ALL
+    SELECT '17',         'T2-DF4',         '04021041',             '040',          '21',         '?'            FROM DUAL
 ),
 
 -- ① HS세관재고 11/30 : 보세구역 × 장치장 × 상품·세관상품코드 (반입 − 반출 누계)
@@ -236,10 +239,13 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
    ===================================================================== */
 WITH
 PRM AS (SELECT '01' COMP_CD, '20261130' BASE_DT, '20261201' DECL_DT FROM DUAL),   -- 기준일 / 신고일자
-BOND AS (                                    -- 점 ↔ 보세구역 + 신고번호 재료 (??? 는 고객 확인 후 채움)
-    SELECT '05' STOR_CD, '본점'   STOR_NM, '01022006' BOND_GRN_CD, '???' CSTM_CD, '??' DEPT_CD, '?' SEQ_PREFIX FROM DUAL UNION ALL
-    SELECT '15',         'T1-DF4',         '04021040',             '???',          '??',         '?'            FROM DUAL UNION ALL
-    SELECT '17',         'T2-DF4',         '04021041',             '???',          '??',         '?'            FROM DUAL
+BOND AS (                                    -- 점 ↔ 보세구역 + 신고번호 재료
+    -- 세관코드(CSTM_CD): 고객 확인 (05 → 010, 15·17 → 040)
+    -- 과코드(DEPT_CD)  : 보세구역코드 4~5번째 자리로 추정 (01022006 → 22, 04021040 → 21)  ※ 확인 필요
+    -- 일련번호 접두문자 : 미정 '?'
+    SELECT '05' STOR_CD, '본점'   STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX FROM DUAL UNION ALL
+    SELECT '15',         'T1-DF4',         '04021040',             '040',          '21',         '?'            FROM DUAL UNION ALL
+    SELECT '17',         'T2-DF4',         '04021041',             '040',          '21',         '?'            FROM DUAL
 ),
 
 -- ① HS세관재고 11/30 : 보세구역 × 장치장 × 상품·세관상품코드 (반입 − 반출 누계)
@@ -384,5 +390,24 @@ SELECT BOND_GRN_CD, SHED_CD, CSTM_ITEM_CLS_CD, GOOS_CD, SUM(QTY) QTY
  GROUP BY BOND_GRN_CD, SHED_CD, CSTM_ITEM_CLS_CD, GOOS_CD
 HAVING SUM(QTY) < 0
  ORDER BY 1, 2, 3, 4;
+
+-- 점검 4) "누계 = 재고" 검증 : WM0121L 처음~기준일 누계 vs 고객이 보는 WM0121S 그날 누적
+--   ※ 11/30 데이터가 생기기 전엔 기준일을 20261120 처럼 이미 있는 날로 바꿔서 실행. DIFF 가 0 이면 누계 방식 확정
+SELECT NVL(L.BOND_GRN_CD, S.BOND_GRN_CD) BOND_GRN_CD, NVL(L.SHED_CD, S.SHED_CD) SHED_CD,
+       L.MIN_DT, L.QTY L_QTY, S.QTY S_QTY, NVL(L.QTY, 0) - NVL(S.QTY, 0) DIFF
+  FROM (SELECT BOND_GRN_CD, SHED_CD, MIN(EDI_REPA_DT) MIN_DT,                 -- 이력 시작일
+               SUM(NVL(CARI_QTY, 0) - NVL(TAKE_OUT_QTY, 0)) QTY
+          FROM WM0121L
+         WHERE COMP_CD = '01' AND BOND_GRN_CD IN ('01022006', '04021040', '04021041')
+           AND EDI_REPA_DT <= '20261120'
+         GROUP BY BOND_GRN_CD, SHED_CD) L
+  FULL OUTER JOIN
+       (SELECT BOND_GRN_CD, SHED_CD, SUM(ACUM_CARI_QTY - ACUM_TAKE_OUT_QTY) QTY
+          FROM WM0121S
+         WHERE COMP_CD = '01' AND BOND_GRN_CD IN ('01022006', '04021040', '04021041')
+           AND EDI_REPA_DT = '20261120'
+         GROUP BY BOND_GRN_CD, SHED_CD) S
+    ON S.BOND_GRN_CD = L.BOND_GRN_CD AND S.SHED_CD = L.SHED_CD
+ ORDER BY 1, 2;
 
 -- Header 의 REF_QTY 를 보세구역·장치장별로 모으면 WM0121S 11/30 집계와 같아야 함 (단, 음수 제외분만큼 차이)
