@@ -21,6 +21,9 @@
 | sql/07_verify.sql | 검증/대사 쿼리 |
 | sql/08_declaration_output.sql | 세관 신고 Header/Detail 생성 (스테이징) |
 | sql/10_one_shot.sql | **한방 쿼리 3종** (① 상품 Z ② GWP Z ③ 미인도 Y) — 스테이징 없이 신고 Detail 직전 결과 |
+| **sql/11_insert_final.sql** | **최종 INSERT 3종** (상품 Z / GWP Z / 미인도 Y) — 한방 쿼리 + 품목정보 + 신고번호로 SR_ItemCarryIn_H/D 에 바로 INSERT |
 | sql/09_insert_target.sql | SR_ItemCarryIn_H / _D 에 INSERT (같은 DB: INSERT…SELECT / 다른 DB: INSERT 문 생성) |
 
-실행 순서: 01 → 02 → (매핑표 적재) → 06의 C01/C02 → 03 → 04 → 05 → 06 변환·집계 → 07 → 08 → 09
+실행 순서 (한방 방식): 10 SELECT 로 점검 → 11 INSERT
+
+실행 순서 (단계 방식): 01 → 02 → (매핑표 적재) → 06의 C01/C02 → 03 → 04 → 05 → 06 변환·집계 → 07 → 08 → 09

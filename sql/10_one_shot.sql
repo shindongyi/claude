@@ -147,7 +147,7 @@ AGG AS (
       LEFT JOIN MAP_CLS MC ON MC.SRC_TYPE = R.CLS_SRC AND MC.SRC_VAL = R.CLS_VAL
      GROUP BY R.WH, R.SHED, R.UNMAPPED_KEY, NVL(MC.ITEM_TYPE, '?'), R.GOOS_CD
 )
-SELECT A.WH                                                   AS WH_CODE,
+SELECT A.WH AS WH_CODE,
        CASE WHEN A.SHED = A.WH THEN NULL ELSE A.SHED END      AS CARRYIN_LOC,
        'Z'                                                    AS DECLARATION_TYPE,
        A.ITEM_TYPE,                                           -- T/W/H/D ('?' = 미판정)
