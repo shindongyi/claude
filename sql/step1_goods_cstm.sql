@@ -158,7 +158,8 @@ UDLV AS (
            NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
            C.GOOS_CD,
            CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
+                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
            C.GOOS_QTY QTY
@@ -189,7 +190,7 @@ TAGGED AS (
            C.CSTM_ITEM_CLS_CD                                      CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
-                     THEN DECODE(G.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
+                     THEN DECODE(LTRIM(G.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END GOOS_GWP,   -- [확인 4] 결과에 따라 GWP 제외
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
@@ -214,7 +215,7 @@ TAGGED_ALL AS (
     SELECT 'UDLV', U.WH_CODE, U.SHED_CD, NULL, -U.QTY, U.GOOS_CD, U.CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN U.CSTM_GOODS_TYPE_CD = 'W' AND U.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(U.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
+                     THEN DECODE(LTRIM(U.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
            '상품', NULL
       FROM UDLV_SCOPED U
       LEFT JOIN REFU R ON R.GOOS_CD = U.GOOS_CD AND R.CSTM_GOODS_TYPE_CD = U.CSTM_GOODS_TYPE_CD
@@ -356,7 +357,8 @@ UDLV AS (
            NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
            C.GOOS_CD,
            CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
-                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
+                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'          THEN 'T'
+                WHEN G.GOOS_CD IS NULL      THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
            C.GOOS_QTY QTY
@@ -387,7 +389,7 @@ TAGGED AS (
            C.CSTM_ITEM_CLS_CD                                      CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
-                     THEN DECODE(G.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
+                     THEN DECODE(LTRIM(G.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(G.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP' ELSE '상품' END GOOS_GWP,   -- [확인 4] 결과에 따라 GWP 제외
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
@@ -412,7 +414,7 @@ TAGGED_ALL AS (
     SELECT 'UDLV', U.WH_CODE, U.SHED_CD, NULL, -U.QTY, U.GOOS_CD, U.CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN U.CSTM_GOODS_TYPE_CD = 'W' AND U.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(U.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
+                     THEN DECODE(LTRIM(U.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
            '상품', NULL
       FROM UDLV_SCOPED U
       LEFT JOIN REFU R ON R.GOOS_CD = U.GOOS_CD AND R.CSTM_GOODS_TYPE_CD = U.CSTM_GOODS_TYPE_CD

@@ -131,7 +131,8 @@ TAGGED AS (
            NVL(L.ARRV_SHED, NVL(L.ARRV_BOND, B.BOND_GRN_CD))      SHED_CD,     -- 도착장치장, 없으면 보세구역 자기 장치장
            CASE WHEN L.KIND = 'W'                     THEN 'D'                 -- GWP
                 WHEN SUBSTR(L.AGIG_CD, 6, 1) = '1'    THEN 'W'
-                WHEN G.GOOS_TYPE_CD = '1'             THEN 'T'
+                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'             THEN 'T'
+                WHEN G.GOOS_CD IS NULL         THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                       CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD
       FROM LINES L
@@ -143,7 +144,7 @@ CODED AS (
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN T.KIND = 'W' THEN T.GOOS_CD                                          -- GWP 는 상품코드 그대로
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(T.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
+                     THEN DECODE(LTRIM(T.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN T.KIND = 'W' THEN 'GWP_CD'
@@ -311,7 +312,8 @@ TAGGED AS (
            NVL(L.ARRV_SHED, NVL(L.ARRV_BOND, B.BOND_GRN_CD))      SHED_CD,     -- 도착장치장, 없으면 보세구역 자기 장치장
            CASE WHEN L.KIND = 'W'                     THEN 'D'                 -- GWP
                 WHEN SUBSTR(L.AGIG_CD, 6, 1) = '1'    THEN 'W'
-                WHEN G.GOOS_TYPE_CD = '1'             THEN 'T'
+                WHEN LTRIM(G.GOOS_TYPE_CD, '0') = '1'             THEN 'T'
+                WHEN G.GOOS_CD IS NULL         THEN '?'   -- 상품마스터에 없음 (구코드) → 미판정
                 ELSE 'D' END                                       CSTM_GOODS_TYPE_CD,
            G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD
       FROM LINES L
@@ -323,7 +325,7 @@ CODED AS (
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN T.KIND = 'W' THEN T.GOOS_CD                                          -- GWP 는 상품코드 그대로
                 WHEN T.CSTM_GOODS_TYPE_CD = 'W' AND T.MST_GOOS_CD IS NOT NULL
-                     THEN DECODE(T.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
+                     THEN DECODE(LTRIM(T.GOOS_TYPE_CD, '0'), '1', '5', '6') || SUBSTR(T.GOOS_CD, 2)
            END                                                     NEW_CSTM_GOOS_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN 'MA9301C'
                 WHEN T.KIND = 'W' THEN 'GWP_CD'
