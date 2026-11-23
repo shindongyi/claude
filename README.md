@@ -19,6 +19,7 @@
 | sql/05_undelivered_minus.sql | C05 미인도반입 교환권 (−) — 고객 쿼리 수정본 |
 | sql/06_cstm_stock_and_subul.sql | C01 HS세관재고, C02 수불, 환급분리·구코드 변환, 최종 집계 |
 | sql/07_verify.sql | 검증/대사 쿼리 |
-| sql/08_declaration_output.sql | 세관 신고 Header/Detail 생성 |
+| sql/08_declaration_output.sql | 세관 신고 Header/Detail 생성 (스테이징) |
+| sql/09_insert_target.sql | SR_ItemCarryIn_H / _D 에 INSERT (같은 DB: INSERT…SELECT / 다른 DB: INSERT 문 생성) |
 
-실행 순서: 01 → 02 → (매핑표 적재) → 06의 C01/C02 → 03 → 04 → 05 → 06 변환·집계 → 07 → 08
+실행 순서: 01 → 02 → (매핑표 적재) → 06의 C01/C02 → 03 → 04 → 05 → 06 변환·집계 → 07 → 08 → 09

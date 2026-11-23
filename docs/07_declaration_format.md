@@ -74,4 +74,9 @@
 
 ## SQL
 - `sql/06` 최종 집계: 결과를 (보세구역, 장치장, 상품/GWP, 정상/미인도, 물품구분, 상품, 교환권번호) 단위로 변경
-- `sql/08_declaration_output.sql`: MIG_BASE_STOC → 신고 Header/Detail 생성 (9,999 품목 분할, 신고번호 채번, 검증)
+- `sql/08_declaration_output.sql`: MIG_BASE_STOC → 신고 Header/Detail 스테이징(MIG_DECL_H/D) 생성 (9,999 품목 분할, 신고번호 채번, 검증)
+- `sql/09_insert_target.sql`: MIG_DECL_H/D → **SR_ItemCarryIn_H / SR_ItemCarryIn_D INSERT**. 같은 DB·DB Link 면 INSERT…SELECT, 다른 DB 면 INSERT 문을 텍스트로 생성
+
+```
+수불·세관재고·매출 → MIG_STOC_COMP(구성요소) → MIG_BASE_STOC(기초재고) → MIG_DECL_H/D(신고 스테이징) → SR_ItemCarryIn_H/D
+```
