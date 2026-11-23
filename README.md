@@ -8,6 +8,7 @@
 | [docs/04_migration_plan.md](docs/04_migration_plan.md) | 기초재고 규칙 매트릭스, 진행 절차, 고객 확인사항, 리허설 계획 |
 | [docs/05_todo_and_questions.md](docs/05_todo_and_questions.md) | 내가 할 일 체크리스트, 고객 문의 목록 |
 | [docs/06_findings.md](docs/06_findings.md) | 조회 결과와 그로부터 확인된 사실 |
+| [docs/07_declaration_format.md](docs/07_declaration_format.md) | 최종 산출물: 세관 물품반입검사신청서(Z/Y) 양식과 매핑 |
 
 | SQL (Oracle, 초안) | 내용 |
 |---|---|
@@ -18,5 +19,6 @@
 | sql/05_undelivered_minus.sql | C05 미인도반입 교환권 (−) — 고객 쿼리 수정본 |
 | sql/06_cstm_stock_and_subul.sql | C01 HS세관재고, C02 수불, 환급분리·구코드 변환, 최종 집계 |
 | sql/07_verify.sql | 검증/대사 쿼리 |
+| sql/08_declaration_output.sql | 세관 신고 Header/Detail 생성 |
 
-실행 순서: 01 → 02 → (매핑표 적재) → 06의 C01/C02 → 03 → 04 → 05 → 06 변환·집계 → 07
+실행 순서: 01 → 02 → (매핑표 적재) → 06의 C01/C02 → 03 → 04 → 05 → 06 변환·집계 → 07 → 08
