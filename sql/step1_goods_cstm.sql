@@ -1,6 +1,7 @@
 /* =====================================================================
    STEP 1. 상품 기초 — 본점 / T1-DF4 / T2-DF4 : HS세관재고 집계 기준
            (환급코드 분리 → 집계, 구코드 정리)    기준일 2026-11-30
+           본점은 미인도반입면장 교환권(판매취소 아닌 것) 판매수량을 뺌 (−) — 미인도는 STEP 4 에서 Y 로 따로 신고
    ---------------------------------------------------------------------
    - 세관재고(WM0121L/S)에는 점코드가 없고 보세구역코드(BOND_GRN_CD)로만 나뉨
      → 점을 보세구역으로 바꿔서 조회 (고객 설명, 11/20 HS 세관재고 기준)
@@ -134,6 +135,50 @@ REFU AS (
      WHERE R.COMP_CD = '01' AND R.USE_YN = 'Y'
 ),
 
+-- ⓤ 미인도 (−) : 미인도반입면장 교환권 중 판매취소 아닌 교환권의 상품 판매수량 (STEP 4 와 같은 조건)
+--    위치 = 반입면장 EDI 도착보세구역·도착장치장 (없으면 판매점 보세구역)
+U_BILL AS (
+    SELECT BD.COMP_CD, BD.STOR_CD, BD.BILL_NO,
+           MAX(IM.ARRV_BOND_RGN_CD) ARRV_BOND, MAX(IM.ARRV_SHED_CD) ARRV_SHED
+      FROM BO0110M BM, BO0110D BD, IFWM11M IM, PRM P
+     WHERE BM.COMP_CD = BD.COMP_CD
+       AND BM.STOR_CD = BD.STOR_CD
+       AND BM.BOND_TRAN_MNGE_NO = BD.BOND_TRAN_MNGE_NO
+       AND BM.COMP_CD = IM.COMP_CD
+       AND BM.EDI_RPT_NO = IM.EDI_RPT_NO
+       AND IM.EDI_DOC_STAT_CD = 'G1'                          /* 확정통보 */
+       AND BM.PMIT_CLS_CD IN ('06', '76', '86')               /* 미인도반입 / 국산미인도반입 / 외국인국산미인도반입 */
+       AND NVL(BM.DEL_YN, 'N') = 'N'
+       AND BM.COMP_CD = P.COMP_CD
+       AND IM.EDI_RPT_DT <= P.BASE_DT
+     GROUP BY BD.COMP_CD, BD.STOR_CD, BD.BILL_NO
+),
+UDLV AS (
+    SELECT NVL(U.ARRV_BOND, B.BOND_GRN_CD)                       WH_CODE,
+           NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
+           C.GOOS_CD,
+           CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
+                ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
+           G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
+           C.GOOS_QTY QTY
+      FROM SA0100M A, SA0103D C, U_BILL U, PRM P, BOND B, MA0040C G
+     WHERE A.COMP_CD = C.COMP_CD AND A.STOR_CD = C.STOR_CD AND A.SALE_DT = C.SALE_DT
+       AND A.POS_NO = C.POS_NO AND A.RCPT_NO = C.RCPT_NO
+       AND A.COMP_CD = U.COMP_CD AND A.STOR_CD = U.STOR_CD AND A.BILL_NO = U.BILL_NO
+       AND A.SALE_TYPE_CD = '1'
+       AND A.SALE_DT <= P.BASE_DT
+       AND NVL(C.SALE_CNCL_YN, 'N') = 'N'
+       AND NOT EXISTS (SELECT 1 FROM SA0100M E                  -- 판매취소가 아닌것
+                        WHERE E.COMP_CD = A.COMP_CD AND E.STOR_CD = A.STOR_CD AND E.BILL_NO = A.BILL_NO
+                          AND E.SALE_TYPE_CD != A.SALE_TYPE_CD AND E.SALE_DT <= P.BASE_DT)
+       AND B.STOR_CD (+) = A.STOR_CD
+       AND G.COMP_CD (+) = C.COMP_CD AND G.GOOS_CD (+) = C.GOOS_CD
+),
+UDLV_SCOPED AS (                             -- STEP 1 에서는 본점 자기 장치장 분만 뺌 (통물 장치장 분은 STEP 2 에서 뺌)
+    SELECT * FROM UDLV WHERE WH_CODE = '01022006' AND SHED_CD = '01022006'
+),
+
 -- ② 환급코드 먼저 반영 (행 단위)
 --    환급구분 = 세관재고의 CSTM_ITEM_CLS_CD (T/D/W)
 --    세관상품코드 = MA9301C 에서 상품코드 + 같은 환급구분 행
@@ -160,14 +205,32 @@ TAGGED AS (
      -- WHERE W.GOOS_CD IS NULL                    -- ← [확인 4] 에서 D 가 GWP 로 나오면 주석 해제 (상품 기초에서 GWP 제외)
 ),
 
+-- ②-1 세관재고(+) 와 미인도(−) 합치기 — 같은 환급코드 규칙으로 코드 맞춤
+TAGGED_ALL AS (
+    SELECT 'CSTM' SRC, T.BOND_GRN_CD, T.SHED_CD, T.HS_CD, T.QTY, T.GOOS_CD, T.CSTM_GOODS_TYPE_CD,
+           T.NEW_CSTM_GOOS_CD, T.GOOS_GWP, T.MATCH_BY
+      FROM TAGGED T
+    UNION ALL
+    SELECT 'UDLV', U.WH_CODE, U.SHED_CD, NULL, -U.QTY, U.GOOS_CD, U.CSTM_GOODS_TYPE_CD,
+           CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
+                WHEN U.CSTM_GOODS_TYPE_CD = 'W' AND U.MST_GOOS_CD IS NOT NULL
+                     THEN DECODE(U.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
+           '상품', NULL
+      FROM UDLV_SCOPED U
+      LEFT JOIN REFU R ON R.GOOS_CD = U.GOOS_CD AND R.CSTM_GOODS_TYPE_CD = U.CSTM_GOODS_TYPE_CD
+),
+
 -- ③ 집계 : 보세구역 × 장치장 × 환급구분 × 세관상품코드
 --    (행 단위로는 음수인 코드가 있음 — 조회상 본점 W −26, T2 W −143 — 매핑 후 합치면 상쇄되는지가 핵심)
 --    합쳐도 0 이하인 것은 신고 대상 아님 → [점검]에서 확인
 AGG AS (
-    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY,
-           MAX(T.HS_CD) HS_CD, SUM(T.QTY) QTY
-      FROM TAGGED T
-     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY
+    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD,
+           MAX(T.GOOS_GWP) GOOS_GWP, MAX(T.MATCH_BY) MATCH_BY, MAX(T.HS_CD) HS_CD,
+           SUM(T.QTY) QTY,                                                     -- 세관재고 − 미인도
+           SUM(CASE WHEN T.SRC = 'CSTM' THEN T.QTY ELSE 0 END) Q_CSTM,
+           SUM(CASE WHEN T.SRC = 'UDLV' THEN T.QTY ELSE 0 END) Q_UDLV
+      FROM TAGGED_ALL T
+     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD
     HAVING SUM(T.QTY) > 0
 ),
 
@@ -219,7 +282,9 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
        X.SHED_CD                                          AS REF_SHED_CD,
        X.GOOS_CD                                          AS REF_GOOS_CD,
        X.MATCH_BY                                         AS REF_MATCH_BY,       -- MA9301C / W_RULE / NO_TYPE / NO_MASTER(구코드)
-       X.GOOS_GWP                                         AS REF_GOOS_GWP        -- 상품 / GWP
+       X.GOOS_GWP                                         AS REF_GOOS_GWP,       -- 상품 / GWP
+       X.Q_CSTM                                           AS REF_Q_CSTM,         -- HS세관재고
+       X.Q_UDLV                                           AS REF_Q_UDLV          -- 미인도 (−, 음수로 표시)
   FROM DECL X
   LEFT JOIN MA0040C M ON M.COMP_CD = '01' AND M.GOOS_CD = X.GOOS_CD        -- 상품마스터
   LEFT JOIN MA0030C B ON B.COMP_CD = M.COMP_CD AND B.BRAN_CD = M.BRAN_CD   -- 브랜드
@@ -261,6 +326,50 @@ REFU AS (
      WHERE R.COMP_CD = '01' AND R.USE_YN = 'Y'
 ),
 
+-- ⓤ 미인도 (−) : 미인도반입면장 교환권 중 판매취소 아닌 교환권의 상품 판매수량 (STEP 4 와 같은 조건)
+--    위치 = 반입면장 EDI 도착보세구역·도착장치장 (없으면 판매점 보세구역)
+U_BILL AS (
+    SELECT BD.COMP_CD, BD.STOR_CD, BD.BILL_NO,
+           MAX(IM.ARRV_BOND_RGN_CD) ARRV_BOND, MAX(IM.ARRV_SHED_CD) ARRV_SHED
+      FROM BO0110M BM, BO0110D BD, IFWM11M IM, PRM P
+     WHERE BM.COMP_CD = BD.COMP_CD
+       AND BM.STOR_CD = BD.STOR_CD
+       AND BM.BOND_TRAN_MNGE_NO = BD.BOND_TRAN_MNGE_NO
+       AND BM.COMP_CD = IM.COMP_CD
+       AND BM.EDI_RPT_NO = IM.EDI_RPT_NO
+       AND IM.EDI_DOC_STAT_CD = 'G1'                          /* 확정통보 */
+       AND BM.PMIT_CLS_CD IN ('06', '76', '86')               /* 미인도반입 / 국산미인도반입 / 외국인국산미인도반입 */
+       AND NVL(BM.DEL_YN, 'N') = 'N'
+       AND BM.COMP_CD = P.COMP_CD
+       AND IM.EDI_RPT_DT <= P.BASE_DT
+     GROUP BY BD.COMP_CD, BD.STOR_CD, BD.BILL_NO
+),
+UDLV AS (
+    SELECT NVL(U.ARRV_BOND, B.BOND_GRN_CD)                       WH_CODE,
+           NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))     SHED_CD,
+           C.GOOS_CD,
+           CASE WHEN SUBSTR(C.AGIG_CD, 6, 1) = '1' THEN 'W'
+                WHEN G.GOOS_TYPE_CD = '1'          THEN 'T'
+                ELSE 'D' END                                      CSTM_GOODS_TYPE_CD,
+           G.GOOS_CD MST_GOOS_CD, G.GOOS_TYPE_CD,
+           C.GOOS_QTY QTY
+      FROM SA0100M A, SA0103D C, U_BILL U, PRM P, BOND B, MA0040C G
+     WHERE A.COMP_CD = C.COMP_CD AND A.STOR_CD = C.STOR_CD AND A.SALE_DT = C.SALE_DT
+       AND A.POS_NO = C.POS_NO AND A.RCPT_NO = C.RCPT_NO
+       AND A.COMP_CD = U.COMP_CD AND A.STOR_CD = U.STOR_CD AND A.BILL_NO = U.BILL_NO
+       AND A.SALE_TYPE_CD = '1'
+       AND A.SALE_DT <= P.BASE_DT
+       AND NVL(C.SALE_CNCL_YN, 'N') = 'N'
+       AND NOT EXISTS (SELECT 1 FROM SA0100M E                  -- 판매취소가 아닌것
+                        WHERE E.COMP_CD = A.COMP_CD AND E.STOR_CD = A.STOR_CD AND E.BILL_NO = A.BILL_NO
+                          AND E.SALE_TYPE_CD != A.SALE_TYPE_CD AND E.SALE_DT <= P.BASE_DT)
+       AND B.STOR_CD (+) = A.STOR_CD
+       AND G.COMP_CD (+) = C.COMP_CD AND G.GOOS_CD (+) = C.GOOS_CD
+),
+UDLV_SCOPED AS (                             -- STEP 1 에서는 본점 자기 장치장 분만 뺌 (통물 장치장 분은 STEP 2 에서 뺌)
+    SELECT * FROM UDLV WHERE WH_CODE = '01022006' AND SHED_CD = '01022006'
+),
+
 -- ② 환급코드 먼저 반영 (행 단위)
 --    환급구분 = 세관재고의 CSTM_ITEM_CLS_CD (T/D/W)
 --    세관상품코드 = MA9301C 에서 상품코드 + 같은 환급구분 행
@@ -287,14 +396,32 @@ TAGGED AS (
      -- WHERE W.GOOS_CD IS NULL                    -- ← [확인 4] 에서 D 가 GWP 로 나오면 주석 해제 (상품 기초에서 GWP 제외)
 ),
 
+-- ②-1 세관재고(+) 와 미인도(−) 합치기 — 같은 환급코드 규칙으로 코드 맞춤
+TAGGED_ALL AS (
+    SELECT 'CSTM' SRC, T.BOND_GRN_CD, T.SHED_CD, T.HS_CD, T.QTY, T.GOOS_CD, T.CSTM_GOODS_TYPE_CD,
+           T.NEW_CSTM_GOOS_CD, T.GOOS_GWP, T.MATCH_BY
+      FROM TAGGED T
+    UNION ALL
+    SELECT 'UDLV', U.WH_CODE, U.SHED_CD, NULL, -U.QTY, U.GOOS_CD, U.CSTM_GOODS_TYPE_CD,
+           CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
+                WHEN U.CSTM_GOODS_TYPE_CD = 'W' AND U.MST_GOOS_CD IS NOT NULL
+                     THEN DECODE(U.GOOS_TYPE_CD, '1', '5', '6') || SUBSTR(U.GOOS_CD, 2) END,
+           '상품', NULL
+      FROM UDLV_SCOPED U
+      LEFT JOIN REFU R ON R.GOOS_CD = U.GOOS_CD AND R.CSTM_GOODS_TYPE_CD = U.CSTM_GOODS_TYPE_CD
+),
+
 -- ③ 집계 : 보세구역 × 장치장 × 환급구분 × 세관상품코드
 --    (행 단위로는 음수인 코드가 있음 — 조회상 본점 W −26, T2 W −143 — 매핑 후 합치면 상쇄되는지가 핵심)
 --    합쳐도 0 이하인 것은 신고 대상 아님 → [점검]에서 확인
 AGG AS (
-    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY,
-           MAX(T.HS_CD) HS_CD, SUM(T.QTY) QTY
-      FROM TAGGED T
-     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD, T.GOOS_GWP, T.MATCH_BY
+    SELECT T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD,
+           MAX(T.GOOS_GWP) GOOS_GWP, MAX(T.MATCH_BY) MATCH_BY, MAX(T.HS_CD) HS_CD,
+           SUM(T.QTY) QTY,                                                     -- 세관재고 − 미인도
+           SUM(CASE WHEN T.SRC = 'CSTM' THEN T.QTY ELSE 0 END) Q_CSTM,
+           SUM(CASE WHEN T.SRC = 'UDLV' THEN T.QTY ELSE 0 END) Q_UDLV
+      FROM TAGGED_ALL T
+     GROUP BY T.BOND_GRN_CD, T.SHED_CD, T.CSTM_GOODS_TYPE_CD, T.NEW_CSTM_GOOS_CD, T.GOOS_CD
     HAVING SUM(T.QTY) > 0
 ),
 
@@ -335,7 +462,9 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
        ----------------------------------------------- 참고 (적재 제외)
        X.STOR_NM                                          AS REF_STOR_NM,
        COUNT(*)                                           AS REF_ITEM_CNT,
-       SUM(X.QTY)                                         AS REF_QTY
+       SUM(X.QTY)                                         AS REF_QTY,
+       SUM(X.Q_CSTM)                                      AS REF_Q_CSTM,
+       SUM(X.Q_UDLV)                                      AS REF_Q_UDLV
   FROM DECL X
   CROSS JOIN PRM P
  GROUP BY X.DECLARATION_NO, X.BOND_GRN_CD, P.DECL_DT, X.SHED_CD, X.STOR_NM
