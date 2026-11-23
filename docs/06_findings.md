@@ -1,0 +1,77 @@
+# 06. 조회 결과 기록 (확인된 사실)
+
+## 2026-11-23 · 재고 귀속 위치
+
+### 조회 1: 판매점·매출점·판매코너 vs 재고점·재고코너 (매출일 2026-10-01 ~ 10-30)
+상위 결과 (500건 중 일부, 모두 STOR_CD = SALE_STOR_CD = STOC_STOR_CD = '05'):
+
+| 판매코너 CORN_CD | 재고코너 STOC_CORN_CD | 상품위치 | 건수 |
+|---|---|---|---|
+| 226 | **964** | 41 고객 | 3,810 |
+| 035 | **964** | 41 | 865 |
+| 738 | 738 | 41 | 791 |
+| 931 | 931 | 41 | 749 |
+| 095 | **964** | 41 | 614 |
+| 691 | 691 | 41 | 389 |
+| 921 | 921 | 41 | 328 |
+| 813 | 813 | 41 | 321 |
+| 657 | 657 | 41 | 288 |
+
+**판단**
+- 판매코너와 재고코너가 다른 건이 대량 존재(226·035·095 → 964) → **재고는 STOC_STOR_CD + STOC_CORN_CD 에서 차감**된다는 가설을 뒷받침.
+- 상위 결과에서는 점코드 3개가 모두 같음 → **점이 달라지는 건이 있는지는 아직 미확인** (아래 추가 조회 a).
+- 지난 달이라 대부분 41(고객, 인도완료). 교환권(02·12) 분포는 현재 시점으로 따로 봐야 함 (추가 조회 c).
+- 실제 코드는 `'05'`, `'035'` 처럼 **앞자리 0 포함 문자열**. Excel 샘플의 `5`, `1` 은 0이 잘린 값.
+
+### 조회 2: MA0100I 에서 코너 607 / 765 / 813 / 961 / 965
+- 이 코너들은 **점 1, 2, 3, 5, 7, 8, 10, 12, 13, 14, 15, 16, 17 등 거의 모든 점에 존재**.
+  → **코너코드는 점마다 같은 번호를 재사용**. 코너 식별은 항상 **(STOR_CD, CORN_CD) 쌍**으로 해야 함.
+- **WH_CLS_CD(창고구분)는 전부 비어 있음** → 창고 여부를 이 컬럼으로 구분할 수 없음.
+- AIRP_RGN_CD(공항구역)에 DF1, DF2-1, DF2-2, DF3, DF4-2, DF7 등 → 공항점 구분 단서. 비어 있는 점(1, 2, 5, 8 등)은 시내점으로 추정.
+- OTSD_BUP_CD(외부업체코드) 2015DF71, 2018DF31, 2018DFA1, 2023DF21, 2023DF41 등 → 공항 사업권 계약 단위로 보임.
+
+**판단**
+- 961 / 965 가 점마다 있으므로 **통합물류는 별도 점이 아니라 "각 점의 재고를 통물 창고에 두는 코너"** 로 관리되고 있을 가능성이 큼.
+  (첫 매출 샘플에서도 상품위치 02 통물창고 → 재고코너 961/965, 재고점은 판매점과 같은 5)
+- 그렇다면 고객이 말한 "통합물류 기초재고"는 **모든 점의 961/965(등 통물 코너) 재고 합**이고,
+  점 구분(본점/T1/T2)과 위치 구분(매장/통물)이 **두 축**이 됨 → 신규 시스템 창고 매핑이 (점, 코너) 단위로 필요.
+- 아직 가설. 코너 이름과 점 이름을 확인해야 확정 (추가 조회 b).
+
+### 추가 조회
+```sql
+-- a) 판매점 ≠ 재고점, 판매점 ≠ 매출점 인 건이 있는지
+SELECT D.STOR_CD, H.SALE_STOR_CD, D.STOC_STOR_CD, H.GOOS_LOC_CLS_CD, COUNT(*) CNT
+  FROM SA0100M H
+  JOIN SA0103D D ON D.COMP_CD=H.COMP_CD AND D.STOR_CD=H.STOR_CD AND D.SALE_DT=H.SALE_DT
+                AND D.POS_NO=H.POS_NO AND D.RCPT_NO=H.RCPT_NO
+ WHERE H.COMP_CD='01' AND H.SALE_DT BETWEEN '20261001' AND '20261030'
+   AND (D.STOR_CD <> D.STOC_STOR_CD OR D.STOR_CD <> H.SALE_STOR_CD)
+ GROUP BY D.STOR_CD, H.SALE_STOR_CD, D.STOC_STOR_CD, H.GOOS_LOC_CLS_CD
+ ORDER BY CNT DESC;
+
+-- b) 점 / 코너 마스터 테이블 찾기 → 이름 확인 (961, 964, 965, 607, 765, 813 이 무엇인지)
+SELECT TABLE_NAME, COMMENTS FROM ALL_TAB_COMMENTS
+ WHERE OWNER='US_OWNER' AND (COMMENTS LIKE '%점%' OR COMMENTS LIKE '%코너%') AND TABLE_NAME LIKE 'MA%'
+ ORDER BY 1;
+-- 코너 마스터가 MA0100C 라면:
+-- SELECT * FROM MA0100C WHERE COMP_CD='01' AND CORN_CD IN ('961','964','965','607','765','813');
+
+-- c) 지금 남아 있는 교환권이 어느 재고점/재고코너에 있는지 (통물 코너 식별)
+SELECT D.STOC_STOR_CD, D.STOC_CORN_CD, H.BILL_PROC_CLS_CD, H.GOOS_LOC_CLS_CD,
+       COUNT(DISTINCT H.BILL_NO) BILL_CNT, SUM(D.GOOS_QTY) QTY
+  FROM SA0100M H
+  JOIN SA0103D D ON D.COMP_CD=H.COMP_CD AND D.STOR_CD=H.STOR_CD AND D.SALE_DT=H.SALE_DT
+                AND D.POS_NO=H.POS_NO AND D.RCPT_NO=H.RCPT_NO
+ WHERE H.COMP_CD='01' AND H.SALE_TYPE_CD='1'
+   AND H.SALE_DT >= '20260101'
+   AND H.GOOS_LOC_CLS_CD IN ('01','02','11','12')
+ GROUP BY D.STOC_STOR_CD, D.STOC_CORN_CD, H.BILL_PROC_CLS_CD, H.GOOS_LOC_CLS_CD
+ ORDER BY 1, 2, 3, 4;
+
+-- d) 수불에 961/965 코너가 점마다 잡혀 있는지 (최근 수불일자 하나로)
+SELECT STOR_CD, CORN_CD, COUNT(*) ROW_CNT, SUM(QTY) QTY
+  FROM WM0052L
+ WHERE COMP_CD='01' AND RD_DT = :RD_DT
+ GROUP BY STOR_CD, CORN_CD
+ ORDER BY 1, 2;
+```

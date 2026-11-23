@@ -7,6 +7,7 @@
 | [docs/03_query_analysis.md](docs/03_query_analysis.md) | 고객 제공 쿼리(`재고관련_정리.sql`) 분석 및 버그 |
 | [docs/04_migration_plan.md](docs/04_migration_plan.md) | 기초재고 규칙 매트릭스, 진행 절차, 고객 확인사항, 리허설 계획 |
 | [docs/05_todo_and_questions.md](docs/05_todo_and_questions.md) | 내가 할 일 체크리스트, 고객 문의 목록 |
+| [docs/06_findings.md](docs/06_findings.md) | 조회 결과와 그로부터 확인된 사실 |
 
 | SQL (Oracle, 초안) | 내용 |
 |---|---|
