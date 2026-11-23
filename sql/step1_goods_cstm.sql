@@ -127,12 +127,6 @@ CSTM AS (
      GROUP BY L.BOND_GRN_CD, L.SHED_CD, L.GOOS_CD, L.CSTM_GOOS_CD, L.HS_CD, L.CSTM_ITEM_CLS_CD
 ),
 
--- 구코드 정리 : 구코드 → 신코드 매핑  ※ 고객 매핑표 받으면 채움 (조회상 본점 42건, T2 5건이 상품마스터에 없음)
-OLD_NEW AS (
-    SELECT CAST(NULL AS VARCHAR2(30)) OLD_GOOS_CD, CAST(NULL AS VARCHAR2(30)) NEW_GOOS_CD FROM DUAL WHERE 1 = 0
-    -- UNION ALL SELECT '구코드', '신코드' FROM DUAL
-),
-
 -- 환급코드 마스터 (상품 마이그에서 등록한 MA9301C) — 상품 하나에 T+W 처럼 여러 개 있을 수 있음
 REFU AS (
     SELECT R.GOOS_CD, R.CSTM_GOODS_TYPE_CD, R.CSTM_GOOS_CD
@@ -142,11 +136,11 @@ REFU AS (
 
 -- ② 환급코드 먼저 반영 (행 단위)
 --    환급구분 = 세관재고의 CSTM_ITEM_CLS_CD (T/D/W)
---    세관상품코드 = MA9301C 에서 (신)상품코드 + 같은 환급구분 행
+--    세관상품코드 = MA9301C 에서 상품코드 + 같은 환급구분 행
 --    MA9301C 에 그 환급구분이 없는 W 는 상품 마이그 규칙으로 생성: (수입 5 / 국산 6) || SUBSTR(상품코드, 2)
 TAGGED AS (
     SELECT C.BOND_GRN_CD, C.SHED_CD, C.HS_CD, C.QTY,
-           NVL(O.NEW_GOOS_CD, C.GOOS_CD)                           GOOS_CD,       -- 구코드 정리 반영
+           C.GOOS_CD,
            C.CSTM_ITEM_CLS_CD                                      CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
@@ -158,12 +152,11 @@ TAGGED AS (
                 WHEN G.GOOS_CD IS NULL THEN 'NO_MASTER'                                 -- 상품마스터에 없음 (구코드)
                 ELSE 'NO_TYPE' END                                 MATCH_BY            -- 상품은 있으나 그 환급구분(T/D) 코드 없음
       FROM CSTM C
-      LEFT JOIN OLD_NEW O  ON O.OLD_GOOS_CD = C.GOOS_CD
-      LEFT JOIN MA0040C G  ON G.COMP_CD = '01' AND G.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
-      LEFT JOIN REFU R     ON R.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
+      LEFT JOIN MA0040C G  ON G.COMP_CD = '01' AND G.GOOS_CD = C.GOOS_CD
+      LEFT JOIN REFU R     ON R.GOOS_CD = C.GOOS_CD
                           AND R.CSTM_GOODS_TYPE_CD = C.CSTM_ITEM_CLS_CD
       LEFT JOIN (SELECT DISTINCT GOOS_CD FROM WM0310C WHERE COMP_CD = '01') W   -- GWP 마스터
-                           ON W.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
+                           ON W.GOOS_CD = C.GOOS_CD
      -- WHERE W.GOOS_CD IS NULL                    -- ← [확인 4] 에서 D 가 GWP 로 나오면 주석 해제 (상품 기초에서 GWP 제외)
 ),
 
@@ -261,12 +254,6 @@ CSTM AS (
      GROUP BY L.BOND_GRN_CD, L.SHED_CD, L.GOOS_CD, L.CSTM_GOOS_CD, L.HS_CD, L.CSTM_ITEM_CLS_CD
 ),
 
--- 구코드 정리 : 구코드 → 신코드 매핑  ※ 고객 매핑표 받으면 채움 (조회상 본점 42건, T2 5건이 상품마스터에 없음)
-OLD_NEW AS (
-    SELECT CAST(NULL AS VARCHAR2(30)) OLD_GOOS_CD, CAST(NULL AS VARCHAR2(30)) NEW_GOOS_CD FROM DUAL WHERE 1 = 0
-    -- UNION ALL SELECT '구코드', '신코드' FROM DUAL
-),
-
 -- 환급코드 마스터 (상품 마이그에서 등록한 MA9301C) — 상품 하나에 T+W 처럼 여러 개 있을 수 있음
 REFU AS (
     SELECT R.GOOS_CD, R.CSTM_GOODS_TYPE_CD, R.CSTM_GOOS_CD
@@ -276,11 +263,11 @@ REFU AS (
 
 -- ② 환급코드 먼저 반영 (행 단위)
 --    환급구분 = 세관재고의 CSTM_ITEM_CLS_CD (T/D/W)
---    세관상품코드 = MA9301C 에서 (신)상품코드 + 같은 환급구분 행
+--    세관상품코드 = MA9301C 에서 상품코드 + 같은 환급구분 행
 --    MA9301C 에 그 환급구분이 없는 W 는 상품 마이그 규칙으로 생성: (수입 5 / 국산 6) || SUBSTR(상품코드, 2)
 TAGGED AS (
     SELECT C.BOND_GRN_CD, C.SHED_CD, C.HS_CD, C.QTY,
-           NVL(O.NEW_GOOS_CD, C.GOOS_CD)                           GOOS_CD,       -- 구코드 정리 반영
+           C.GOOS_CD,
            C.CSTM_ITEM_CLS_CD                                      CSTM_GOODS_TYPE_CD,
            CASE WHEN R.CSTM_GOOS_CD IS NOT NULL THEN R.CSTM_GOOS_CD
                 WHEN C.CSTM_ITEM_CLS_CD = 'W' AND G.GOOS_CD IS NOT NULL
@@ -292,12 +279,11 @@ TAGGED AS (
                 WHEN G.GOOS_CD IS NULL THEN 'NO_MASTER'                                 -- 상품마스터에 없음 (구코드)
                 ELSE 'NO_TYPE' END                                 MATCH_BY            -- 상품은 있으나 그 환급구분(T/D) 코드 없음
       FROM CSTM C
-      LEFT JOIN OLD_NEW O  ON O.OLD_GOOS_CD = C.GOOS_CD
-      LEFT JOIN MA0040C G  ON G.COMP_CD = '01' AND G.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
-      LEFT JOIN REFU R     ON R.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
+      LEFT JOIN MA0040C G  ON G.COMP_CD = '01' AND G.GOOS_CD = C.GOOS_CD
+      LEFT JOIN REFU R     ON R.GOOS_CD = C.GOOS_CD
                           AND R.CSTM_GOODS_TYPE_CD = C.CSTM_ITEM_CLS_CD
       LEFT JOIN (SELECT DISTINCT GOOS_CD FROM WM0310C WHERE COMP_CD = '01') W   -- GWP 마스터
-                           ON W.GOOS_CD = NVL(O.NEW_GOOS_CD, C.GOOS_CD)
+                           ON W.GOOS_CD = C.GOOS_CD
      -- WHERE W.GOOS_CD IS NULL                    -- ← [확인 4] 에서 D 가 GWP 로 나오면 주석 해제 (상품 기초에서 GWP 제외)
 ),
 
@@ -360,7 +346,7 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
    [점검]
    ===================================================================== */
 -- 점검 1) 구코드 목록 — 상품마스터(MA0040C)에 없는 세관재고 상품코드 (조회상 본점 42, T2 5)
---         → 고객에게 신코드 매핑 받아서 위 OLD_NEW 에 채우기
+--         → Detail 에서 REF_MATCH_BY = 'NO_MASTER' 로 표시됨, 처리 방법은 고객 확인
 SELECT L.BOND_GRN_CD, L.GOOS_CD, L.CSTM_GOOS_CD, L.CSTM_ITEM_CLS_CD, MAX(L.HS_CD) HS_CD,
        SUM(NVL(L.CARI_QTY, 0) - NVL(L.TAKE_OUT_QTY, 0)) QTY
   FROM WM0121L L
