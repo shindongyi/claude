@@ -21,7 +21,7 @@
 | sql/07_verify.sql | 검증/대사 쿼리 |
 | sql/08_declaration_output.sql | 세관 신고 Header/Detail 생성 (스테이징) |
 | sql/10_one_shot.sql | (이전 버전, 참고) 한방 쿼리 3종 (① 상품 Z ② GWP Z ③ 미인도 Y) — 스테이징 없이 신고 Detail 직전 결과 |
-| **sql/step1_main_goods.sql** | **STEP 1 (진행 중)**: 상품 기초 — 본점 HS세관재고, 환급코드(MA9301C) 먼저 붙이고 집계, 신고 Detail 형태 |
+| **sql/step1_goods_cstm.sql** | **STEP 1 (진행 중)**: 상품 기초 — 본점·T1-DF4·T2-DF4 HS세관재고, 환급코드(MA9301C) 먼저 붙이고 집계, 신고 Detail 형태 |
 | sql/12_november_simple.sql | **현재 기준 (권장)**: 11/30 기준, 고객 쿼리 모양을 살린 단순 버전. **테이블·뷰 생성 없이 SELECT 4개** (계산재고 / 세관재고 / 미인도 / 대사) |
 | sql/11_insert_final.sql | (이전 버전, 참고) 최종 INSERT 3종 (상품 Z / GWP Z / 미인도 Y) — 한방 쿼리 + 품목정보 + 신고번호로 SR_ItemCarryIn_H/D 에 바로 INSERT |
 | sql/09_insert_target.sql | SR_ItemCarryIn_H / _D 에 INSERT (같은 DB: INSERT…SELECT / 다른 DB: INSERT 문 생성) |
