@@ -71,3 +71,8 @@ CREATE TABLE MIG_MAP_BOND (            -- 보세구역/장치장 -> 원천 점�
     STOR_CD     VARCHAR2(10) NOT NULL,
     CONSTRAINT MIG_MAP_BOND_PK PRIMARY KEY (BOND_GRN_CD, SHED_CD)
 );
+
+CREATE TABLE MIG_MAP_ITEM_TYPE (       -- 상품코드 -> 상품(G)/GWP(W) 구분 (판정 기준 고객 확인 후 생성)
+    GOOS_CD     VARCHAR2(30) NOT NULL PRIMARY KEY,
+    ITEM_TYPE   VARCHAR2(1)  NOT NULL
+);
