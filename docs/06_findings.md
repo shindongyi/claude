@@ -81,3 +81,32 @@ SELECT STOR_CD, CORN_CD, COUNT(*) ROW_CNT, SUM(QTY) QTY
 - 각 보세구역 장치장: 자기 장치장 + **04077090 제2 통합물류센터 + 04077137 은산 통합물류창고**.
 - → 앞의 가설(통합물류는 별도 점이 아니라 각 점 재고가 놓인 위치) 확인. 매출·수불에서는 코너(961/965 등)로, 세관에서는 장치장으로 표현.
 - 최종 산출물은 관세청 물품반입검사신청서(Z 기초재고반입 / Y 미인도물품재고반입) → `docs/07_declaration_format.md`
+
+## 2026-11-24 · 상품/GWP 마이그 스크립트에서 확인한 것
+**점코드** (GWP 마이그 스크립트 주석)
+
+| STOR_CD | 점 |
+|---|---|
+| 01 | 부산점 |
+| 04 | 온라인(부산) |
+| **05** | **본점** |
+| 06 | 온라인(본점) |
+| 14 | T1-DF2 (2023) |
+| **15** | **T1-DF4 (2023)** |
+| 16 | T2-DF2 (2023) |
+| **17** | **T2-DF4 (2023)** |
+
+→ 매출 샘플의 STOR_CD '05' 는 **본점**.
+
+**환급코드 = MA9301C(마스터_세관신고 상품코드)**
+- 컬럼: COMP_CD, GOOS_CD, **CSTM_GOODS_TYPE_CD**(T 수입 / D 내국 / W 환급), **CSTM_GOOS_CD**(세관신고 상품코드), GWP_YN, EDI_RPT_YN, USE_YN, CHG_YN
+- 상품: MA0040C + MA0042L(바코드, BRCD_CLS_CD='02', 유효기간 내) 에서
+  AGIG_CD 6번째 자리 = 1 → **W**, 아니면 GOOS_TYPE_CD = 1 → **T**, 그 외 **D**
+- W 의 세관상품코드 = (GOOS_TYPE_CD 1 → '5', 그 외 '6') || SUBSTR(GOOS_CD, 2)
+- GWP: CSTM_GOODS_TYPE_CD = 'D', CSTM_GOOS_CD = GOOS_CD, GWP_YN = 'Y'
+- → 신고서 item_type = CSTM_GOODS_TYPE_CD, **item_code = CSTM_GOOS_CD**
+
+**기타 마스터**
+- MA0030C 브랜드 (BRAN_NM), MA3118I 상품용량추가정보 (GOOS_CAPA, 신고용량)
+- GWP: WM0310C 기본, WM0310I 추가정보(MNGE_LVL_CD 등급, CSTM_GOOS_CTG_CD), WM0314C 상품속성(REF_NO, HS_CD, GOOS_CAPA, SIZE_UNIT_CD 71 ML / 73 GR, CSTM_GOOS_NM), WM0313L 사용점
+- 세관상품명 규칙 (GWP): 브랜드명 || ' ' || REF_NO || ' ' || 상품명
