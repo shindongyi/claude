@@ -5,7 +5,7 @@
      - WM0121S 에 GOOS_CD 가 있는지 (없으면 WM0121L 기준으로 산출)
      - 집계 프로시저(SP_WMCM_CSTM_RPT_LIST_5_SUM / _8)를 기준일까지 돌린 뒤 사용하는지
      - 환급 분리 기준 컬럼 (CSTM_ITEM_CLS_CD 가정)
-     - 수불: WM0053L(물류 월별수불내역, 월 단위). WM0054L 은 폐기신고로 보여 수불 아님 → 일반상품/GWP·일별 수불 테이블 재확인
+     - 수불: 상품 WM0052L(일)/WM0053L(월), GWP WM0352L(일)/WM0353L(월). QTY 가 잔량인지 증감인지 아래 판별 쿼리로 확인
    바인드: :RUN_ID, :COMP_CD, :BASE_DT
    ===================================================================== */
 
@@ -40,34 +40,86 @@ SELECT C.BOND_GRN_CD, C.SHED_CD, SUM(C.QTY) CALC_QTY, S.CSTM_QTY, SUM(C.QTY) - S
  WHERE C.MIG_RUN_ID = :RUN_ID AND C.COMP_TYPE = 'C01'
  GROUP BY C.BOND_GRN_CD, C.SHED_CD, S.CSTM_QTY;
 
-/* ---------- C02: 수불재고 (WM0053L 물류 월별수불내역) ----------
-   가정: QTY = 해당 월(YMON) 말 재고수량, 기준일 = 월말
-   - 기준일이 월말이 아니면: 전월 YMON 재고 + 당월 1일~기준일 일별 수불 (일별 수불 테이블 확인 후 추가)
-   - 상품/GWP 구분 방법 미확인: 상품마스터의 상품유형(GOOS_TYPE_CD) 등으로 ITEM_TYPE 판정 필요 → 아래는 MIG_MAP_ITEM_TYPE 가정
-   - 대상: 통물 상품, 본점/통물 GWP(계산재고 베이스), T1·T2 GWP(수불재고 그대로)                     */
+/* ---------- C02: 수불재고 ----------
+   상품: WM0052L(일수불) / WM0053L(월수불)    GWP: WM0352L(일수불) / WM0353L(월수불)
+   대상: 통물 상품, 본점/통물 GWP(계산재고 베이스), T1·T2 GWP(수불재고 그대로)
+   ※ QTY 의미에 따라 방식 A / B 중 하나 사용 → 먼저 [판별] 실행                                    */
+
+/* [판별] 마감된 달 하나(:YMON, 예 '202610')로 점별 총량 비교
+   - CHK_A 의 두 값이 같으면  → 일수불 QTY = 그날 잔량            → 방식 A
+   - CHK_B 의 두 값이 같으면  → 월수불 = 월말 잔량, 일수불 = 증감  → 방식 B            */
+WITH M AS (SELECT STOR_CD, SUM(QTY) Q FROM WM0053L WHERE COMP_CD = :COMP_CD AND YMON = :YMON GROUP BY STOR_CD),
+     P AS (SELECT STOR_CD, SUM(QTY) Q FROM WM0053L WHERE COMP_CD = :COMP_CD
+                                       AND YMON = TO_CHAR(ADD_MONTHS(TO_DATE(:YMON,'YYYYMM'),-1),'YYYYMM') GROUP BY STOR_CD),
+     DL AS (SELECT STOR_CD, SUM(QTY) Q FROM WM0052L WHERE COMP_CD = :COMP_CD
+                                        AND RD_DT = TO_CHAR(LAST_DAY(TO_DATE(:YMON,'YYYYMM')),'YYYYMMDD') GROUP BY STOR_CD),
+     DS AS (SELECT STOR_CD, SUM(QTY) Q FROM WM0052L WHERE COMP_CD = :COMP_CD
+                                        AND RD_DT LIKE :YMON || '%' GROUP BY STOR_CD)
+SELECT M.STOR_CD,
+       M.Q AS MONTH_QTY,
+       DL.Q AS CHK_A_LASTDAY_QTY,                     -- 방식 A 이면 MONTH_QTY 와 같음
+       NVL(P.Q,0) + NVL(DS.Q,0) AS CHK_B_PREV_PLUS_DAYS  -- 방식 B 이면 MONTH_QTY 와 같음
+  FROM M LEFT JOIN P ON P.STOR_CD = M.STOR_CD
+         LEFT JOIN DL ON DL.STOR_CD = M.STOR_CD
+         LEFT JOIN DS ON DS.STOR_CD = M.STOR_CD
+ ORDER BY 1;
+-- GWP 도 같은 방법으로 WM0353L / WM0352L 비교
+
+/* [방식 A] 일수불 QTY = 그날 잔량 → 기준일 행을 그대로 사용 (상품) */
 INSERT INTO MIG_STOC_COMP
       (MIG_RUN_ID, BASE_DT, COMP_CD, STOR_CD, CORN_CD, ITEM_TYPE, STOC_TYPE, COMP_TYPE, SIGN,
        GOOS_CD_ORG, REFUND_CLS, STOC_CLS_CD, FALT_CLS_CD, AGIG_CD, QTY, SRC_KEY)
-SELECT :RUN_ID, :BASE_DT, S.COMP_CD, S.STOR_CD, S.CORN_CD,
-       NVL(T.ITEM_TYPE, 'G'),                         -- TODO: 상품/GWP 판정 기준 확인
+SELECT :RUN_ID, :BASE_DT, S.COMP_CD, S.STOR_CD, S.CORN_CD, 'G',
        'N',                                           -- TODO: STOC_CLS_CD(WM014) 값별 정상/미인도 매핑
        'C02', +1,
        S.GOOS_CD, S.REFU_CLS_CD, S.STOC_CLS_CD, S.FALT_CLS_CD, S.AGIG_CD,
-       S.QTY,
-       S.YMON
-  FROM WM0053L S
-  LEFT JOIN MIG_MAP_ITEM_TYPE T ON T.GOOS_CD = S.GOOS_CD   -- 가칭: 상품코드 → G/W
+       S.QTY, 'WM0052L|' || S.RD_DT
+  FROM WM0052L S
  WHERE S.COMP_CD = :COMP_CD
-   AND S.YMON = SUBSTR(:BASE_DT, 1, 6)
+   AND S.RD_DT = :BASE_DT
    AND S.QTY <> 0;
+-- ※ 잔량 방식이라도 "변동 있는 날만 행이 생기는" 구조면 기준일에 행이 없는 상품이 빠짐
+--    → 그 경우 상품·코너별 RD_DT <= :BASE_DT 중 최신 행을 사용 (ROW_NUMBER() OVER (PARTITION BY ... ORDER BY RD_DT DESC))
 
--- C02 점검: 월별수불에 어떤 점/코너/구분값이 들어 있는지 (통물 전용인지 확인)
-SELECT STOR_CD, CORN_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD,
+/* [방식 B] 월수불 = 월말 잔량, 일수불 = 증감 → 전월말 + 당월 1일~기준일 (상품) */
+INSERT INTO MIG_STOC_COMP
+      (MIG_RUN_ID, BASE_DT, COMP_CD, STOR_CD, CORN_CD, ITEM_TYPE, STOC_TYPE, COMP_TYPE, SIGN,
+       GOOS_CD_ORG, REFUND_CLS, STOC_CLS_CD, FALT_CLS_CD, AGIG_CD, QTY, SRC_KEY)
+SELECT :RUN_ID, :BASE_DT, COMP_CD, STOR_CD, CORN_CD, 'G', 'N', 'C02', +1,
+       GOOS_CD, REFU_CLS_CD, STOC_CLS_CD, FALT_CLS_CD, AGIG_CD, SUM(QTY), 'PREV_MONTH+DAYS'
+  FROM (SELECT COMP_CD, STOR_CD, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD, QTY
+          FROM WM0053L
+         WHERE COMP_CD = :COMP_CD
+           AND YMON = TO_CHAR(ADD_MONTHS(TO_DATE(:BASE_DT,'YYYYMMDD'),-1),'YYYYMM')
+        UNION ALL
+        SELECT COMP_CD, STOR_CD, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD, QTY
+          FROM WM0052L
+         WHERE COMP_CD = :COMP_CD
+           AND RD_DT BETWEEN SUBSTR(:BASE_DT,1,6) || '01' AND :BASE_DT)
+ GROUP BY COMP_CD, STOR_CD, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD
+HAVING SUM(QTY) <> 0;
+
+/* GWP: 위 A 또는 B 와 같은 구조로 WM0352L / WM0353L 사용, ITEM_TYPE = 'W'
+   (REFU_CLS_CD, FALT_CLS_CD 컬럼 없음 → NULL)                                                       */
+
+-- C02 점검: 수불에 어떤 점/코너/구분값이 있는지 (통물·본점·T1·T2 포함 여부)
+SELECT 'G' ITEM_TYPE, STOR_CD, CORN_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD,
        COUNT(*) ROW_CNT, COUNT(DISTINCT GOOS_CD) GOOS_CNT, SUM(QTY) QTY
-  FROM WM0053L
- WHERE COMP_CD = :COMP_CD AND YMON = :YMON
+  FROM WM0053L WHERE COMP_CD = :COMP_CD AND YMON = :YMON
  GROUP BY STOR_CD, CORN_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD
- ORDER BY 1, 2, 3, 4, 5;
+UNION ALL
+SELECT 'W', STOR_CD, CORN_CD, STOC_CLS_CD, NULL, NULL,
+       COUNT(*), COUNT(DISTINCT GOOS_CD), SUM(QTY)
+  FROM WM0353L WHERE COMP_CD = :COMP_CD AND YMON = :YMON
+ GROUP BY STOR_CD, CORN_CD, STOC_CLS_CD
+ ORDER BY 1, 2, 3, 4;
+
+-- GWP 매출(SA0109D)의 GOOS_CD 가 GWP 수불(WM0353L)에 있는지 → GWP 재고 키 확인
+SELECT COUNT(DISTINCT G.GOOS_CD) SALE_GWP_GOOS,
+       COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM WM0353L W WHERE W.COMP_CD = G.COMP_CD AND W.GOOS_CD = G.GOOS_CD)
+                           THEN G.GOOS_CD END) FOUND_IN_GWP_SUBUL
+  FROM SA0109D G
+ WHERE G.COMP_CD = :COMP_CD AND G.SALE_DT LIKE :YMON || '%';
 
 /* ---------- 변환 1: 환급코드 분리 (집계 전, REFUND_CLS 보존 상태에서) ---------- */
 UPDATE MIG_STOC_COMP C

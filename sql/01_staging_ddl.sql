@@ -17,9 +17,9 @@ CREATE TABLE MIG_STOC_COMP (
     COMP_TYPE       VARCHAR2(3)    NOT NULL,   -- C01 HS세관재고 / C02 수불기말 / C03 교환권(+) / C04 H재반입(-) / C05 미인도반입(-)
     SIGN            NUMBER(1)      NOT NULL,   -- +1 / -1
     GOOS_CD_ORG     VARCHAR2(30)   NOT NULL,   -- 원천 상품코드
-    REFUND_CLS      VARCHAR2(10),              -- 환급구분 (WM0053L.REFU_CLS_CD, GO407 등 분리 기준값 보관)
-    STOC_CLS_CD     VARCHAR2(10),              -- 재고구분 (WM0053L.STOC_CLS_CD, WM014)
-    FALT_CLS_CD     VARCHAR2(10),              -- 불량구분 (WM0053L.FALT_CLS_CD, WM037)
+    REFUND_CLS      VARCHAR2(10),              -- 환급구분 (수불 REFU_CLS_CD, GO407 등 분리 기준값 보관)
+    STOC_CLS_CD     VARCHAR2(10),              -- 재고구분 (수불 STOC_CLS_CD, WM014)
+    FALT_CLS_CD     VARCHAR2(10),              -- 불량구분 (수불 FALT_CLS_CD, WM037)
     AGIG_CD         VARCHAR2(10),              -- 에이징코드
     GOOS_CD         VARCHAR2(30),              -- 환급분리+구코드정리 후 최종 상품코드
     QTY             NUMBER(15)     NOT NULL,
@@ -72,7 +72,3 @@ CREATE TABLE MIG_MAP_BOND (            -- 보세구역/장치장 -> 원천 점�
     CONSTRAINT MIG_MAP_BOND_PK PRIMARY KEY (BOND_GRN_CD, SHED_CD)
 );
 
-CREATE TABLE MIG_MAP_ITEM_TYPE (       -- 상품코드 -> 상품(G)/GWP(W) 구분 (판정 기준 고객 확인 후 생성)
-    GOOS_CD     VARCHAR2(30) NOT NULL PRIMARY KEY,
-    ITEM_TYPE   VARCHAR2(1)  NOT NULL
-);

@@ -12,7 +12,7 @@ SELECT c.TABLE_NAME, c.COLUMN_ID, c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, c.N
     ON m.OWNER = c.OWNER AND m.TABLE_NAME = c.TABLE_NAME AND m.COLUMN_NAME = c.COLUMN_NAME
  WHERE c.OWNER = 'US_OWNER'
    AND c.TABLE_NAME IN ('SA0100M','SA0103D','SA0109D','SA2000I','MA0100I','MA0150M','MA0151D',
-                        'WM0053L','WM0054L','BO0110M','BO0110D','IFWM11M','IFWM12M','MK5010D','WM0121L','WM0121S')
+                        'WM0052L','WM0053L','WM0352L','WM0353L','BO0110M','BO0110D','IFWM11M','IFWM12M','MK5010D','WM0121L','WM0121S')
  ORDER BY c.TABLE_NAME, c.COLUMN_ID;
 
 -- PK / UK 확인 (조인 시 중복 발생 여부 판단에 필수)
@@ -37,8 +37,11 @@ SELECT con.TABLE_NAME, con.CONSTRAINT_NAME, con.CONSTRAINT_TYPE,
 | SA0100M | 영업_매출기본 (빌 헤더) | 교환권/판매취소 판정, 빌 상태(BO015)·상품위치(BO014) |
 | SA0103D | 영업_매출상세 (상품) | **상품 판매수량** (교환권 수량 산출) |
 | SA0109D | 영업_매출상세 (GWP = 판촉품) | **GWP 지급수량** (PMNT_QTY) |
-| **WM0053L** | 물류 월별수불내역 (월말재고) | **수불재고 원천 후보**. 월(YMON) 단위, 환급구분·재고구분·불량구분 컬럼 보유 |
-| WM0054L | (명세상) 폐기신고 관리 | ⚠️ **수불 테이블이 아님** — 일반상품/GWP 수불 테이블 재확인 필요 |
+| **WM0052L** | 상품 일수불 | **상품 수불재고** (일자 RD_DT 단위) |
+| **WM0053L** | 상품 월수불 | 상품 수불재고 (년월 YMON 단위) |
+| **WM0352L** | GWP 일수불 | **GWP 수불재고** (일자 RD_DT 단위) |
+| **WM0353L** | GWP 월수불 | GWP 수불재고 (년월 YMON 단위) |
+| WM0054L | 폐기신고 (참고) | 수불 아님. 폐기예정 재고 제외 여부 확인용 |
 | SA2000I | 영업_매출기본부속정보 | 배송/멤버십 정보 (재고 계산에는 불필요) |
 | MA0100I | 마스터_점코너구역정보 | 코너 → 창고/구역 매핑 |
 | MA0150M | 공통코드 기본 (분류) | 코드 분류 정의 |
@@ -164,26 +167,32 @@ SELECT con.TABLE_NAME, con.CONSTRAINT_NAME, con.CONSTRAINT_TYPE,
 
 - 상품(SA0103D)과 달리 **라인 취소여부/반품수량 컬럼이 없음** → GWP 취소는 빌(SA0100M) 단위로만 판정.
 
-## WM0053L — 물류 월별수불내역
+## 수불 테이블 4종 (고객 제공)
 
-| 컬럼 | 타입 | 설명 / 코드 |
-|---|---|---|
-| COMP_CD | CHAR | 회사코드 |
-| STOR_CD | VARCHAR2 | 점코드 |
-| **YMON** | CHAR | **년월 (월 단위)** |
-| CORN_CD | VARCHAR2 | 코너코드 |
-| GOOS_CD | VARCHAR2 | 상품코드 |
-| AGIG_CD | VARCHAR2 | 에이징코드 |
-| **STOC_CLS_CD** | VARCHAR2 | **재고구분코드 (MA0150M, WM, WM014)** — 정상/미인도 등 구분 후보 |
-| **REFU_CLS_CD** | VARCHAR2 | **환급구분코드 (MA0150M, GO, GO407)** — 고객이 말한 "환급코드 분리"의 기준 후보 |
-| **FALT_CLS_CD** | CHAR | **불량구분코드 (MA0150M, WM, WM037)** |
-| **QTY** | NUMBER | **수량** (월말재고인지 월 수불량인지 확인 필요) |
-| STOC_COST_DOLR_AMT / STOC_COST_WON_AMT | NUMBER | 재고원가 달러 / 원화금액 |
+| 테이블 | 구분 | 기간 키 | 키 컬럼 | 수량·속성 |
+|---|---|---|---|---|
+| **WM0052L** | 상품 일수불 | RD_DT (수불일자) | COMP_CD, STOR_CD, RD_DT, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD (추정) | QTY, STOC_COST_DOLR_AMT, STOC_COST_WON_AMT |
+| **WM0053L** | 상품 월수불 | YMON (년월) | COMP_CD, STOR_CD, YMON, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD, REFU_CLS_CD, FALT_CLS_CD (추정) | QTY, STOC_COST_DOLR_AMT, STOC_COST_WON_AMT |
+| **WM0352L** | GWP 일수불 | RD_DT | COMP_CD, STOR_CD, RD_DT, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD | QTY |
+| **WM0353L** | GWP 월수불 | YMON | COMP_CD, STOR_CD, YMON, CORN_CD, GOOS_CD, AGIG_CD, STOC_CLS_CD | QTY |
 
-- **월 단위**라서 기준일이 월말이 아니면 "전월말 재고 + 당월 일별 수불"이 필요 → 일별 수불 테이블 확인 필요.
-- "물류" 월별수불 → 통합물류 전용인지, 본점·T1·T2 도 들어 있는지 확인 필요 (GWP 수불재고는 T1·T2 에도 필요).
+공통 컬럼 의미:
 
-## WM0054L — 폐기신고 (명세상 추정)
+| 컬럼 | 설명 / 코드 |
+|---|---|
+| STOR_CD / CORN_CD | 점 / 코너 (재고 위치) |
+| GOOS_CD | 상품코드 — **GWP도 GOOS_CD 로 관리** → SA0109D.GOOS_CD 와 연결 (SPTM_CD 아님, 확인 필요) |
+| AGIG_CD | 에이징코드 |
+| **STOC_CLS_CD** | **재고구분코드 (MA0150M, WM, WM014)** — 정상/미인도 등 구분 후보 |
+| **REFU_CLS_CD** | **환급구분코드 (MA0150M, GO, GO407)** — 상품만 있음. "환급코드 분리"의 기준 유력 |
+| **FALT_CLS_CD** | **불량구분코드 (MA0150M, WM, WM037)** — 상품만 있음 |
+| **QTY** | 수량 — **잔량(그 시점 재고)인지 증감(그 기간 수불량)인지 미확인**. 입고/출고 컬럼이 따로 없어 잔량일 가능성이 높음 → `sql/06` 판별 쿼리로 확인 |
+| STOC_COST_DOLR_AMT / _WON_AMT | 재고원가 달러/원화 금액 (상품만) |
+
+- GWP 수불에는 환급구분·불량구분·원가 컬럼이 없음 → GWP 는 환급 분리 대상이 아님.
+- 일수불이 있으므로 기준일이 월말이 아니어도 산출 가능.
+
+## WM0054L — 폐기신고 (명세상 추정, 참고)
 EDI_MNGE_NO(EDI관리번호), RPT_MNGE_NO(신고관리번호), PMIT_CLS_CD(면장구분 WM038), DEPA_TRPL_CD/ARRV_TRPL_CD(출발/도착 운송지),
 RPT_DT/RPT_USR_ID/RPT_USR_NM(신고일자/신고자), TRAN_END_DT, FIX_YN/DEL_YN/RPT_YN, EDI_RPT_NO/EDI_REF_NO,
 **DISU_PLAC_NM(폐기장소명), DISU_METH_CONT(폐기방법내용), DISU_EXPT_DT(폐기예정일자)**, INFC_ID.
