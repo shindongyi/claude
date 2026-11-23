@@ -77,8 +77,10 @@ BOND AS (                                    -- 점 ↔ 보세구역 + 신고번
     SELECT '17',         'T2-DF4',         '04021041',             '040',          '21',         '?'            FROM DUAL
 ),
 TONG AS (                                    -- 통물 코너 → 통물 장치장  ※ [확인 1] 보고 채움 (장치장 모르면 '????????')
-    SELECT '961' CORN_CD, '????????' SHED_CD FROM DUAL UNION ALL     -- 예) 04077090 제2 통합물류센터 ?
-    SELECT '965',         '????????'         FROM DUAL               -- 예) 04077137 은산 통합물류창고 ?
+    -- 장치장: 04077090 제2 통합물류센터 / 04077137 은산 통합물류창고
+    -- ※ 어느 코너가 어느 장치장인지는 확인 필요 (지금은 961 → 제2, 965 → 은산 으로 가정)
+    SELECT '961' CORN_CD, '04077090' SHED_CD FROM DUAL UNION ALL     -- 제2 통합물류센터 (가정)
+    SELECT '965',         '04077137'         FROM DUAL               -- 은산 통합물류창고 (가정)
 ),
 
 -- 판매취소 아닌 상품 매출 라인  ← 고객 쿼리 "1. 매출조회 기본" (수정분 동일)
@@ -291,15 +293,21 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
        NULL                                               AS REGISTER_NO,        -- 19 참조번호
        NULL                                               AS ITEM_COST_KRW,      -- 20 단가(원화)
        NULL                                               AS QTY_UNIT_CODE,      -- 21 수량단위
-       ----------------------------------------------- 참고 (적재 제외)
-       X.STOR_NM                                          AS REF_STOR_NM,
-       X.SHED_CD                                          AS REF_SHED_CD,
-       X.GOOS_CD                                          AS REF_GOOS_CD,
-       X.Q_SUBUL                                          AS REF_Q_SUBUL,        -- 수불 기말
-       X.Q_EXCH                                           AS REF_Q_EXCH,         -- 교환권 (+)
-       X.Q_HREENT                                         AS REF_Q_HREENT,       -- H재반입 (−, 음수로 표시)
-       X.Q_UDLV                                           AS REF_Q_UDLV,         -- 미인도 (−, 음수로 표시)
-       X.MATCH_BY                                         AS REF_MATCH_BY
+       ----------------------------------------------- 참고 (적재 제외, 4개 STEP 공통 순서)
+       X.STOR_NM                                               AS REF_STOR_NM,
+       X.SHED_CD                                               AS REF_SHED_CD,
+       'LOGI'                                                  AS REF_SITE,
+       X.GOOS_CD                                               AS REF_GOOS_CD,
+       '상품'                                                    AS REF_GOOS_GWP,
+       X.MATCH_BY                                              AS REF_MATCH_BY,
+       M.REF_NO                                                AS REF_REF_NO,
+       NULL                                                    AS REF_BILL_STAT,
+       NULL                                                    AS REF_PMIT_CNT,
+       NULL                                                    AS REF_Q_CSTM,
+       X.Q_SUBUL                                               AS REF_Q_SUBUL,
+       X.Q_EXCH                                                AS REF_Q_EXCH,
+       X.Q_HREENT                                              AS REF_Q_HREENT,
+       X.Q_UDLV                                                AS REF_Q_UDLV
   FROM DECL X
   LEFT JOIN MA0040C M ON M.COMP_CD = '01' AND M.GOOS_CD = X.GOOS_CD
   LEFT JOIN MA0030C B ON B.COMP_CD = M.COMP_CD AND B.BRAN_CD = M.BRAN_CD
@@ -319,8 +327,10 @@ BOND AS (                                    -- 점 ↔ 보세구역 + 신고번
     SELECT '17',         'T2-DF4',         '04021041',             '040',          '21',         '?'            FROM DUAL
 ),
 TONG AS (                                    -- 통물 코너 → 통물 장치장  ※ [확인 1] 보고 채움 (장치장 모르면 '????????')
-    SELECT '961' CORN_CD, '????????' SHED_CD FROM DUAL UNION ALL     -- 예) 04077090 제2 통합물류센터 ?
-    SELECT '965',         '????????'         FROM DUAL               -- 예) 04077137 은산 통합물류창고 ?
+    -- 장치장: 04077090 제2 통합물류센터 / 04077137 은산 통합물류창고
+    -- ※ 어느 코너가 어느 장치장인지는 확인 필요 (지금은 961 → 제2, 965 → 은산 으로 가정)
+    SELECT '961' CORN_CD, '04077090' SHED_CD FROM DUAL UNION ALL     -- 제2 통합물류센터 (가정)
+    SELECT '965',         '04077137'         FROM DUAL               -- 은산 통합물류창고 (가정)
 ),
 
 -- 판매취소 아닌 상품 매출 라인  ← 고객 쿼리 "1. 매출조회 기본" (수정분 동일)
@@ -523,14 +533,19 @@ SELECT X.DECLARATION_NO                                   AS DECLARATION_NO,    
        'A1'                                               AS STATUS,                --  9 A1 생성
        SYSDATE                                            AS C_DATETIME,            -- 10 생성일시
        NULL                                               AS INTERNATIONAL_MAIL_YN, -- 11 국제우편여부
-       ----------------------------------------------- 참고 (적재 제외)
-       X.STOR_NM                                          AS REF_STOR_NM,
-       COUNT(*)                                           AS REF_ITEM_CNT,
-       SUM(X.QTY)                                         AS REF_QTY,
-       SUM(X.Q_SUBUL)                                     AS REF_Q_SUBUL,
-       SUM(X.Q_EXCH)                                      AS REF_Q_EXCH,
-       SUM(X.Q_HREENT)                                    AS REF_Q_HREENT,
-       SUM(X.Q_UDLV)                                      AS REF_Q_UDLV
+       ----------------------------------------------- 참고 (적재 제외, 4개 STEP 공통 순서)
+       X.STOR_NM                                               AS REF_STOR_NM,
+       'LOGI'                                                  AS REF_SITE,
+       COUNT(*)                                                AS REF_ITEM_CNT,
+       NULL                                                    AS REF_BILL_CNT,
+       SUM(X.QTY)                                              AS REF_QTY,
+       NULL                                                    AS REF_QTY_GOODS,
+       NULL                                                    AS REF_QTY_GWP,
+       NULL                                                    AS REF_Q_CSTM,
+       SUM(X.Q_SUBUL)                                          AS REF_Q_SUBUL,
+       SUM(X.Q_EXCH)                                           AS REF_Q_EXCH,
+       SUM(X.Q_HREENT)                                         AS REF_Q_HREENT,
+       SUM(X.Q_UDLV)                                           AS REF_Q_UDLV
   FROM DECL X
   CROSS JOIN PRM P
  GROUP BY X.DECLARATION_NO, X.BOND_GRN_CD, P.DECL_DT, X.SHED_CD, X.STOR_NM

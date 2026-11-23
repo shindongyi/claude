@@ -211,14 +211,21 @@ SELECT X.DECLARATION_NO                                        AS DECLARATION_NO
        X.BILL_NO                                               AS REGISTER_NO,        -- 19 참조번호 = 교환권번호 (빌번호, 확인)
        CASE X.KIND WHEN 'W' THEN 0 END                         AS ITEM_COST_KRW,      -- 20 단가(원화)
        NULL                                                    AS QTY_UNIT_CODE,      -- 21 수량단위
-       ----------------------------------------------- 참고 (적재 제외)
+       ----------------------------------------------- 참고 (적재 제외, 4개 STEP 공통 순서)
        X.STOR_NM                                               AS REF_STOR_NM,
        X.SHED_CD                                               AS REF_SHED_CD,
-       DECODE(X.KIND, 'G', '상품', 'GWP')                       AS REF_GOOS_GWP,
+       NULL                                                    AS REF_SITE,
        X.GOOS_CD                                               AS REF_GOOS_CD,
-       X.BILL_PROC_CLS_CD                                      AS REF_BILL_STAT,      -- 빌상태 (04 면 확인)
-       X.PMIT_CNT                                              AS REF_PMIT_CNT,       -- 2 이상이면 재반입 여러 번
-       X.MATCH_BY                                              AS REF_MATCH_BY
+       DECODE(X.KIND, 'G', '상품', 'GWP')                        AS REF_GOOS_GWP,
+       X.MATCH_BY                                              AS REF_MATCH_BY,
+       CASE X.KIND WHEN 'W' THEN WP.REF_NO ELSE M.REF_NO END   AS REF_REF_NO,
+       X.BILL_PROC_CLS_CD                                      AS REF_BILL_STAT,
+       X.PMIT_CNT                                              AS REF_PMIT_CNT,
+       NULL                                                    AS REF_Q_CSTM,
+       NULL                                                    AS REF_Q_SUBUL,
+       NULL                                                    AS REF_Q_EXCH,
+       NULL                                                    AS REF_Q_HREENT,
+       NULL                                                    AS REF_Q_UDLV
   FROM DECL X
   LEFT JOIN MA0040C M  ON X.KIND = 'G' AND M.COMP_CD = '01' AND M.GOOS_CD = X.GOOS_CD    -- 상품마스터
   LEFT JOIN MA0030C B  ON B.COMP_CD = M.COMP_CD AND B.BRAN_CD = M.BRAN_CD               -- 브랜드
@@ -373,13 +380,19 @@ SELECT X.DECLARATION_NO                                        AS DECLARATION_NO
        'A1'                                                    AS STATUS,                --  9 A1 생성
        SYSDATE                                                 AS C_DATETIME,            -- 10 생성일시
        NULL                                                    AS INTERNATIONAL_MAIL_YN, -- 11 국제우편여부
-       ----------------------------------------------- 참고 (적재 제외)
+       ----------------------------------------------- 참고 (적재 제외, 4개 STEP 공통 순서)
        X.STOR_NM                                               AS REF_STOR_NM,
+       NULL                                                    AS REF_SITE,
        COUNT(*)                                                AS REF_ITEM_CNT,
        COUNT(DISTINCT X.BILL_NO)                               AS REF_BILL_CNT,
        SUM(X.QTY)                                              AS REF_QTY,
        SUM(CASE X.KIND WHEN 'G' THEN X.QTY ELSE 0 END)         AS REF_QTY_GOODS,
-       SUM(CASE X.KIND WHEN 'W' THEN X.QTY ELSE 0 END)         AS REF_QTY_GWP
+       SUM(CASE X.KIND WHEN 'W' THEN X.QTY ELSE 0 END)         AS REF_QTY_GWP,
+       NULL                                                    AS REF_Q_CSTM,
+       NULL                                                    AS REF_Q_SUBUL,
+       NULL                                                    AS REF_Q_EXCH,
+       NULL                                                    AS REF_Q_HREENT,
+       NULL                                                    AS REF_Q_UDLV
   FROM DECL X
   CROSS JOIN PRM P
  GROUP BY X.DECLARATION_NO, X.WH_CODE, P.DECL_DT, X.SHED_CD, X.STOR_NM
