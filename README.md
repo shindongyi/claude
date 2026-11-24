@@ -26,6 +26,7 @@
 | **sql/step3_gwp.sql** | **STEP 3**: GWP 기초 — 본점·통물 계산재고 (수불 + 교환권 − H재반입 − 미인도), T1·T2 수불재고 |
 | **sql/step4_undelivered.sql** | **STEP 4**: 상품·GWP 미인도 기초 — 미인도반입면장 교환권, 신고구분 Y (교환권번호별) |
 | **sql/step5_tmp_load.sql** | **STEP 5**: TEMP DDL(H/D) → STEP 1~4 적재 방법 → 검증 V1~V9 → 본테이블 적재 |
+| **sql/sales_unreported.sql** | **판매미신고** (별개 건): 빌상태 01·02 × 상품위치 01·02·11·12 → 판매신고서 SR_Sales_H / _D |
 | sql/12_november_simple.sql | **현재 기준 (권장)**: 11/30 기준, 고객 쿼리 모양을 살린 단순 버전. **테이블·뷰 생성 없이 SELECT 4개** (계산재고 / 세관재고 / 미인도 / 대사) |
 | sql/11_insert_final.sql | (이전 버전, 참고) 최종 INSERT 3종 (상품 Z / GWP Z / 미인도 Y) — 한방 쿼리 + 품목정보 + 신고번호로 SR_ItemCarryIn_H/D 에 바로 INSERT |
 | sql/09_insert_target.sql | SR_ItemCarryIn_H / _D 에 INSERT (같은 DB: INSERT…SELECT / 다른 DB: INSERT 문 생성) |
