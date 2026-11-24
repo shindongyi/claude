@@ -62,6 +62,17 @@ BOND AS (                                    -- 본점만 (신고구분 E 인도
     SELECT '05' STOR_CD, '본점' STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX,
            'E' DECL_TYPE, 'E' DELIV_METHOD FROM DUAL
 ),
+-- 환율 : MA0140I 매매기준환율(TRD_STD_EXCH_RTE), 미국달러, 매출기준일자(SALE_STD_DT) 별
+--        같은 매출기준일자에 고시가 여러 건이면 가장 늦은 고시일자 것
+EXRT AS (
+    SELECT X.SALE_STD_DT,
+           MAX(X.TRD_STD_EXCH_RTE) KEEP (DENSE_RANK LAST ORDER BY X.EXCH_RTE_NOTI_DT) TRD_STD_EXCH_RTE
+      FROM MA0140I X
+     WHERE X.COMP_CD = '01'
+       AND X.CUR_CD = 'USD'                                     -- 통화코드 (MA037) 값 확인
+       AND X.SALE_STD_DT IS NOT NULL
+     GROUP BY X.SALE_STD_DT
+),
 TONG AS (                                    -- 통물 코너 → 통물 장치장 (재고 STEP 2·3 과 같은 값, 961/965 배정은 가정)
     SELECT '961' CORN_CD, '04077090' SHED_CD FROM DUAL UNION ALL
     SELECT '965',         '04077137'         FROM DUAL
@@ -186,6 +197,17 @@ BOND AS (                                    -- 본점만 (신고구분 E 인도
     SELECT '05' STOR_CD, '본점' STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX,
            'E' DECL_TYPE, 'E' DELIV_METHOD FROM DUAL
 ),
+-- 환율 : MA0140I 매매기준환율(TRD_STD_EXCH_RTE), 미국달러, 매출기준일자(SALE_STD_DT) 별
+--        같은 매출기준일자에 고시가 여러 건이면 가장 늦은 고시일자 것
+EXRT AS (
+    SELECT X.SALE_STD_DT,
+           MAX(X.TRD_STD_EXCH_RTE) KEEP (DENSE_RANK LAST ORDER BY X.EXCH_RTE_NOTI_DT) TRD_STD_EXCH_RTE
+      FROM MA0140I X
+     WHERE X.COMP_CD = '01'
+       AND X.CUR_CD = 'USD'                                     -- 통화코드 (MA037) 값 확인
+       AND X.SALE_STD_DT IS NOT NULL
+     GROUP BY X.SALE_STD_DT
+),
 TONG AS (                                    -- 통물 코너 → 통물 장치장 (재고 STEP 2·3 과 같은 값, 961/965 배정은 가정)
     SELECT '961' CORN_CD, '04077090' SHED_CD FROM DUAL UNION ALL
     SELECT '965',         '04077137'         FROM DUAL
@@ -267,8 +289,7 @@ SELECT B.DECLARATION_NO                                            AS DECLARATIO
        'D'                                                         AS DEPARTURE_ARRIVE_TYPE,  -- 19 입/출국 D 출국
        B.DPAT_DT                                                   AS DEPARTURE_ARRIVE_DATE,  -- 20 출국예정일자
        B.OPEN_NM                                                   AS FLIGHT_NO,              -- 21 편명
-       CASE WHEN NVL(B.TOT_SALE_DOLR_AMT, 0) = 0 THEN 0
-            ELSE ROUND(B.TOT_SALE_WON_AMT / B.TOT_SALE_DOLR_AMT, 2) END AS EXCHANGE_RATE,     -- 22 환율 (원화/달러로 계산, 환율 테이블 있으면 교체)
+       ROUND(NVL(X.TRD_STD_EXCH_RTE, 0), 2)                        AS EXCHANGE_RATE,          -- 22 환율 = MA0140I 매매기준환율 (매출일 기준, 없으면 0)
        CASE WHEN B.SALE_CRS_CLS_CD = 'OFF' THEN 'N' ELSE 'Y' END   AS ELECTRONIC_COMMERCE_YN, -- 23 전자상거래 여부
        CASE WHEN B.GOOS_LOC_CLS_CD IN ('02', '12') THEN T.SHED_CD END AS CARRYOUT_LOC,        -- 24 반출장치장소 (통물이면 통물 장치장)
        ----------------------------------------------- 참고 (적재 제외)
@@ -276,10 +297,13 @@ SELECT B.DECLARATION_NO                                            AS DECLARATIO
        B.BILL_PROC_CLS_CD                                          AS REF_BILL_STAT,
        B.GOOS_LOC_CLS_CD                                           AS REF_GOOS_LOC,
        B.NATI_CD                                                   AS REF_NATI_CD,
-       B.NET_SELL_DOLR_AMT                                         AS REF_NET_USD
+       B.NET_SELL_DOLR_AMT                                         AS REF_NET_USD,
+       CASE WHEN NVL(B.TOT_SALE_DOLR_AMT, 0) = 0 THEN NULL
+            ELSE ROUND(B.TOT_SALE_WON_AMT / B.TOT_SALE_DOLR_AMT, 2) END AS REF_RATE_BY_AMT       -- (비교용) 매출 원화÷달러
   FROM BILL_NO_SEQ B
   CROSS JOIN PRM P
   LEFT JOIN TONG T     ON T.CORN_CD = B.STOC_CORN_CD
+  LEFT JOIN EXRT X     ON X.SALE_STD_DT = B.SALE_DT                                  -- 매출일 환율
   LEFT JOIN MA0151D N  ON N.COMP_CD = '01' AND N.WRK_MDUL_CD = 'MA' AND N.COMM_CTG_CD = 'MA024'
                       AND N.COMM_CTG_DTL_CD = B.NATI_CD
  ORDER BY 1;
