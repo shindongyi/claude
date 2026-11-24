@@ -114,7 +114,7 @@ CREATE INDEX TMP_ITEMCARRYIN_H_IX1 ON TMP_ITEMCARRYIN_H (DECLARATION_NO, WH_CODE
 
 
 /* ---------------------------------------------------------------------
-   2-1. [채번] — STEP 1·2·3·4 PL/SQL 적재를 COMMIT 한 다음 실행
+   2-1. [채번] (사용 안 함 — STEP 1~4 루프에서 채번함. 번호가 빈 건이 남았을 때만 보조로 사용)
         FN_MA_AUTO_NO 가 내부에서 COMMIT 하므로 적재와 분리함
         - 신고번호가 비어 있는 Header 만 채번 → 중간에 실패해도 다시 돌리면 남은 것만 이어서 채번
         - Header 1건마다 : 채번 1번 → Header·Detail(같은 DECL_KEY) 에 같은 번호 → COMMIT

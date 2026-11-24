@@ -223,7 +223,6 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20001, 'TMP_SALES_H 에 이미 데이터 있음 → DELETE 후 실행');
     END IF;
 
-    SAVEPOINT SP_SALES;
 
     FOR R IN C_BILL LOOP
         V_CUR_BILL := R.BILL_NO;
@@ -249,8 +248,8 @@ BEGIN
             RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 (MA041 세관·과 코드 확인) : ' || R.WH_CODE);
         END IF;
 
-        -- ② 채번은 2-1 블록에서 (여기서는 NULL)
-        V_DECL_NO := NULL;
+        -- ② 채번 (교환권 1건 = Header 1건당 1번)
+        V_DECL_NO := FN_MA_AUTO_NO(R.COMP_CD, 'MA76', R.NO_PREFIX, V_REGR_ID);   -- ★
 
         -- ③ Header
         INSERT INTO TMP_SALES_H
@@ -402,16 +401,16 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('품목없음 SKIP   = ' || V_SKIP_CNT);
 
     IF V_DRY_RUN = 'Y' THEN
-        ROLLBACK TO SP_SALES;
-        DBMS_OUTPUT.PUT_LINE('DRY RUN → ROLLBACK (반영 안 됨)');
+        ROLLBACK;                                   -- 채번 함수가 COMMIT 하므로 완전한 ROLLBACK 안 됨
+        DBMS_OUTPUT.PUT_LINE('DRY RUN 은 채번 때문에 완전한 ROLLBACK 이 안 됨 → 개발기에서 테스트');
     ELSE
         DBMS_OUTPUT.PUT_LINE('반영됨 → 건수 확인 후 COMMIT');
     END IF;
 
 EXCEPTION
     WHEN OTHERS THEN
-        ROLLBACK TO SP_SALES;
-        DBMS_OUTPUT.PUT_LINE('FAIL → 전체 ROLLBACK');
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('FAIL → 마지막 채번 이후분만 ROLLBACK → TMP DELETE 후 재실행');
         DBMS_OUTPUT.PUT_LINE('실패 교환권 : ' || V_CUR_BILL);
         DBMS_OUTPUT.PUT_LINE(SQLERRM);
         RAISE;
@@ -426,7 +425,7 @@ COMMIT;
 
 
 /* ==========================================================================
-   2-1) 채번 — 2) 를 COMMIT 한 다음 실행
+   2-1) (사용 안 함 — 2) 루프에서 채번함. 채번이 비어 있는 건이 남았을 때만 보조로 사용)
         신고번호 빈 교환권만, 당일 출국 → 이후 → 지남 순으로 1건씩 채번 + COMMIT
         중간에 실패해도 다시 돌리면 남은 것만 이어서 채번
    ========================================================================== */

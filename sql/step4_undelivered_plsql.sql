@@ -15,6 +15,8 @@
    ========================================================================== */
 DECLARE
     V_DRY_RUN     VARCHAR2(1)  := 'Y';            -- Y: 끝나고 ROLLBACK / N: 반영
+    V_REGR_ID     VARCHAR2(10) := 'MIG';          -- 채번 등록자 (확인)
+    V_DECL_NO     VARCHAR2(27);                  -- 신고번호 (루프에서 FN_MA_AUTO_NO)
     V_BASE_DT     VARCHAR2(8)  := '20261130';
     V_DECL_DT     VARCHAR2(8)  := '20261201';
 
@@ -210,7 +212,6 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20001, 'STEP 4 가 이미 TMP 에 있음 → DELETE (H/D, MIG_STEP = 4) 후 실행');
     END IF;
 
-    SAVEPOINT SP_STEP4;
 
     FOR R IN C_SRC LOOP
         V_CUR_KEY := R.WH_CODE || '/' || R.SHED_CD || '/' || R.BILL_NO || '/' || R.GOOS_CD;
@@ -224,6 +225,7 @@ BEGIN
 
             V_GRP      := V_GRP + 1;
             V_DECL_KEY := 'S4|' || R.WH_CODE || '|' || R.SHED_CD || '|' || LPAD(V_GRP, 4, '0');
+            V_DECL_NO  := FN_MA_AUTO_NO('01', 'BO15', R.NO_PREFIX, V_REGR_ID);   -- ★ 채번 (Header 1건당 1번)
 
             INSERT INTO TMP_ITEMCARRYIN_H
             (
@@ -235,7 +237,7 @@ BEGIN
             VALUES
             (
                   4, V_BASE_DT, SYSDATE
-                , NULL                                                         --  1 신고번호 ([채번] 블록에서)
+                , V_DECL_NO                                                         --  1 신고번호 (채번)
                 , R.WH_CODE                                                    --  2 신고지점
                 , 'DLG'                                                        --  3 문서구분
                 , V_DECL_DT                                                    --  4 신고일자
@@ -271,7 +273,7 @@ BEGIN
         VALUES
         (
               4, V_BASE_DT, SYSDATE
-            , NULL                                        --  1 신고번호 ([채번] 블록에서)
+            , V_DECL_NO                                        --  1 신고번호 (채번)
             , R.WH_CODE                                   --  2 신고지점
             , 'DLG'                                       --  3 문서구분
             , V_SEQ                                       --  4 품목일련번호
@@ -316,16 +318,17 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('수량 합계      = ' || V_QTY);
 
     IF V_DRY_RUN = 'Y' THEN
-        ROLLBACK TO SP_STEP4;
-        DBMS_OUTPUT.PUT_LINE('DRY RUN → ROLLBACK (반영 안 됨)');
+        ROLLBACK;                                   -- 채번 함수가 COMMIT 하므로 마지막 신고서 이후분만 되돌려짐
+        DBMS_OUTPUT.PUT_LINE('DRY RUN 은 채번 때문에 완전한 ROLLBACK 이 안 됨 → 개발기에서 테스트');
     ELSE
         DBMS_OUTPUT.PUT_LINE('반영됨 → 건수 확인 후 COMMIT → [채번] 블록 실행');
     END IF;
 
 EXCEPTION
     WHEN OTHERS THEN
-        ROLLBACK TO SP_STEP4;
-        DBMS_OUTPUT.PUT_LINE('FAIL → 전체 ROLLBACK');
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('FAIL → 마지막 채번 이후분만 ROLLBACK (그 전 신고서는 이미 COMMIT 됨)');
+        DBMS_OUTPUT.PUT_LINE('→ DELETE (MIG_STEP = 4) 후 재실행');
         DBMS_OUTPUT.PUT_LINE('실패 위치 : ' || V_CUR_KEY);
         DBMS_OUTPUT.PUT_LINE(SQLERRM);
         RAISE;
