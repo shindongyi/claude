@@ -1,0 +1,390 @@
+/* ==========================================================================
+   STEP 3. GWP 기초 — 신고구분 Z (PL/SQL 적재)
+   --------------------------------------------------------------------------
+   본점 / 통물     : 계산재고 = GWP 수불 기말재고(WM0353L 11월)
+                               + 교환권 (00·02 / 00·12 / 01·12)
+                               − H신고 재반입면장 교환권 중 판매취소 아닌 것의 판매수량
+                               − 미인도반입면장 교환권 중 판매취소 아닌 것의 판매수량 (Y 신고는 STEP 4)
+   T1-DF4 / T2-DF4 : 수불재고 (WM0353L 그대로)
+
+   - 조회 로직은 SELECT 버전(기초재고_GWP.sql)과 동일, 적재만 LOOP 로
+   - (보세구역, 장치장) 바뀔 때 또는 9,999 품목 찰 때 → 새 신고서 (DECL_KEY)
+   - 채번은 여기서 안 함 (FN_MA_AUTO_NO 내부 COMMIT) → step5_tmp_load.sql [채번] 블록에서 부여
+   - 적재 대상 : TMP_ITEMCARRYIN_H / TMP_ITEMCARRYIN_D (MIG_STEP = 3)
+
+   사용법 : V_DRY_RUN = 'Y' (끝나면 ROLLBACK) → 'N' 실행 → 건수 확인 후 COMMIT → [채번] 블록
+   ※ 빌상태·상품위치는 현재 상태 값 → 12/1 영업 시작 전 실행
+   ========================================================================== */
+DECLARE
+    V_DRY_RUN     VARCHAR2(1)  := 'Y';            -- Y: 끝나고 ROLLBACK / N: 반영
+    V_BASE_DT     VARCHAR2(8)  := '20261130';
+    V_YMON        VARCHAR2(6)  := '202611';
+    V_DECL_DT     VARCHAR2(8)  := '20261201';
+
+    V_DECL_KEY    VARCHAR2(100);
+    V_GRP         NUMBER := 0;
+    V_BOND        VARCHAR2(20);
+    V_SHED        VARCHAR2(30);
+    V_SEQ         NUMBER := 0;
+    V_H_CNT       NUMBER := 0;
+    V_D_CNT       NUMBER := 0;
+    V_QTY         NUMBER := 0;
+    V_EXIST       NUMBER;
+    V_CUR_KEY     VARCHAR2(200);
+
+    CURSOR C_SRC IS
+    WITH
+    BOND AS (
+        SELECT '05' AS STOR_CD, '본점'   AS STOR_NM, 'MAIN' AS SITE, '01022006' AS BOND_GRN_CD FROM DUAL UNION ALL
+        SELECT '15' AS STOR_CD, 'T1-DF4' AS STOR_NM, 'T1'   AS SITE, '04021040' AS BOND_GRN_CD FROM DUAL UNION ALL
+        SELECT '17' AS STOR_CD, 'T2-DF4' AS STOR_NM, 'T2'   AS SITE, '04021041' AS BOND_GRN_CD FROM DUAL
+    ),
+    TONG AS (
+        SELECT '961' AS CORN_CD, '04077090' AS SHED_CD FROM DUAL UNION ALL      -- 제2 통합물류센터
+        SELECT '965' AS CORN_CD, '04077137' AS SHED_CD FROM DUAL                -- 은산 통합물류센터
+    ),
+    -- 판매취소 아닌 GWP 매출 라인
+    SALE AS (
+        SELECT A.COMP_CD
+             , A.STOR_CD
+             , A.BILL_NO
+             , A.BILL_PROC_CLS_CD
+             , A.GOOS_LOC_CLS_CD
+             , NVL(G.STOC_STOR_CD, A.STOC_STOR_CD) AS STOC_STOR_CD
+             , NVL(G.STOC_CORN_CD, A.STOC_CORN_CD) AS STOC_CORN_CD
+             , G.GOOS_CD
+             , G.PMNT_QTY                          AS QTY
+          FROM SA0100M A
+             , SA0109D G
+         WHERE A.COMP_CD      = G.COMP_CD
+           AND A.STOR_CD      = G.STOR_CD
+           AND A.SALE_DT      = G.SALE_DT
+           AND A.POS_NO       = G.POS_NO
+           AND A.RCPT_NO      = G.RCPT_NO
+           AND A.COMP_CD      = '01'
+           AND A.SALE_TYPE_CD = '1'
+           AND A.SALE_DT     <= V_BASE_DT
+           AND NOT EXISTS (SELECT 1
+                             FROM SA0100M E
+                            WHERE E.COMP_CD       = A.COMP_CD
+                              AND E.STOR_CD       = A.STOR_CD
+                              AND E.BILL_NO       = A.BILL_NO
+                              AND E.SALE_TYPE_CD != A.SALE_TYPE_CD
+                              AND E.SALE_DT      <= V_BASE_DT)
+    ),
+    -- H신고 재반입면장 교환권 빌
+    H_BILL AS (
+        SELECT BD.COMP_CD
+             , BD.STOR_CD
+             , BD.BILL_NO
+          FROM BO0110M BM
+             , BO0110D BD
+             , IFWM11M IM
+             , MA0151D MD
+         WHERE BM.COMP_CD           = BD.COMP_CD
+           AND BM.STOR_CD           = BD.STOR_CD
+           AND BM.BOND_TRAN_MNGE_NO = BD.BOND_TRAN_MNGE_NO
+           AND BM.COMP_CD           = IM.COMP_CD
+           AND BM.EDI_RPT_NO        = IM.EDI_RPT_NO
+           AND IM.EDI_DOC_STAT_CD   = 'G1'
+           AND BM.COMP_CD           = MD.COMP_CD
+           AND BM.PMIT_CLS_CD       = MD.COMM_CTG_DTL_CD
+           AND MD.WRK_MDUL_CD       = 'WM'
+           AND MD.COMM_CTG_CD       = 'WM038'
+           AND MD.COMM_CTG_DTL_CD  IN ('05','75','85','10','80','90','20','91')
+           AND MD.COMM_PROP_CONT_1  = 'H'
+           AND NVL(BM.DEL_YN, 'N')  = 'N'
+           AND IM.EDI_RPT_DT       <= V_BASE_DT
+        UNION
+        SELECT MK.COMP_CD
+             , MK.STOR_CD
+             , MK.BILL_NO
+          FROM MK5010D MK
+             , IFWM12M IM
+         WHERE MK.COMP_CD          = IM.COMP_CD
+           AND MK.EDI_RPT_NO       = IM.EDI_RPT_NO
+           AND IM.EDI_DOC_CLS_CD   = '5KP'
+           AND IM.CSTM_RPT_CLS_CD IN ('B', 'R')
+           AND IM.EDI_DOC_STAT_CD  = 'F1'
+           AND IM.EDI_RPT_DT      <= V_BASE_DT
+    ),
+    -- 미인도반입면장 교환권 빌 + 도착 보세구역·장치장
+    U_BILL AS (
+        SELECT BD.COMP_CD
+             , BD.STOR_CD
+             , BD.BILL_NO
+             , MAX(IM.ARRV_BOND_RGN_CD) AS ARRV_BOND
+             , MAX(IM.ARRV_SHED_CD)     AS ARRV_SHED
+          FROM BO0110M BM
+             , BO0110D BD
+             , IFWM11M IM
+         WHERE BM.COMP_CD           = BD.COMP_CD
+           AND BM.STOR_CD           = BD.STOR_CD
+           AND BM.BOND_TRAN_MNGE_NO = BD.BOND_TRAN_MNGE_NO
+           AND BM.COMP_CD           = IM.COMP_CD
+           AND BM.EDI_RPT_NO        = IM.EDI_RPT_NO
+           AND IM.EDI_DOC_STAT_CD   = 'G1'
+           AND BM.PMIT_CLS_CD      IN ('06', '76', '86')
+           AND NVL(BM.DEL_YN, 'N')  = 'N'
+           AND BM.COMP_CD           = '01'
+           AND IM.EDI_RPT_DT       <= V_BASE_DT
+         GROUP BY BD.COMP_CD, BD.STOR_CD, BD.BILL_NO
+    ),
+    -- ① 구성요소 → 보세구역·장치장·구분(SITE)
+    COMP AS (
+        -- GWP 수불 기말재고 (05·15·17 전 코너)
+        SELECT 'SUBUL' AS SRC
+             , B.BOND_GRN_CD                                              AS WH_CODE
+             , NVL(T.SHED_CD, B.BOND_GRN_CD)                              AS SHED_CD
+             , CASE WHEN T.CORN_CD IS NOT NULL THEN 'LOGI' ELSE B.SITE END AS SITE
+             , S.GOOS_CD
+             , S.QTY
+          FROM WM0353L S
+          JOIN BOND B
+            ON B.STOR_CD = S.STOR_CD
+          LEFT JOIN TONG T
+            ON T.CORN_CD = S.CORN_CD
+         WHERE S.COMP_CD = '01'
+           AND S.YMON    = V_YMON
+        UNION ALL
+        -- 교환권 (+)
+        SELECT 'EXCH'
+             , B.BOND_GRN_CD
+             , NVL(T.SHED_CD, B.BOND_GRN_CD)
+             , CASE WHEN T.CORN_CD IS NOT NULL THEN 'LOGI' ELSE B.SITE END
+             , X.GOOS_CD
+             , X.QTY
+          FROM SALE X
+          JOIN BOND B
+            ON B.STOR_CD = X.STOC_STOR_CD
+          LEFT JOIN TONG T
+            ON T.CORN_CD = X.STOC_CORN_CD
+         WHERE (X.BILL_PROC_CLS_CD, X.GOOS_LOC_CLS_CD) IN (('00','02'), ('00','12'), ('01','12'))
+        UNION ALL
+        -- H신고 재반입 (−)
+        SELECT 'HREENT'
+             , B.BOND_GRN_CD
+             , NVL(T.SHED_CD, B.BOND_GRN_CD)
+             , CASE WHEN T.CORN_CD IS NOT NULL THEN 'LOGI' ELSE B.SITE END
+             , X.GOOS_CD
+             , -X.QTY
+          FROM SALE X
+          JOIN BOND B
+            ON B.STOR_CD = X.STOC_STOR_CD
+          LEFT JOIN TONG T
+            ON T.CORN_CD = X.STOC_CORN_CD
+         WHERE (X.COMP_CD, X.STOR_CD, X.BILL_NO) IN (SELECT COMP_CD, STOR_CD, BILL_NO FROM H_BILL)
+        UNION ALL
+        -- 미인도 (−) : 도착 보세구역·장치장
+        SELECT 'UDLV'
+             , NVL(U.ARRV_BOND, B.BOND_GRN_CD)
+             , NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD))
+             , CASE WHEN NVL(U.ARRV_SHED, NVL(U.ARRV_BOND, B.BOND_GRN_CD)) IN ('04077090', '04077137') THEN 'LOGI'
+                    WHEN NVL(U.ARRV_BOND, B.BOND_GRN_CD) = '01022006' THEN 'MAIN'
+                    ELSE 'T1T2' END
+             , X.GOOS_CD
+             , -X.QTY
+          FROM SALE X
+          JOIN U_BILL U
+            ON U.COMP_CD = X.COMP_CD
+           AND U.STOR_CD = X.STOR_CD
+           AND U.BILL_NO = X.BILL_NO
+          LEFT JOIN BOND B
+            ON B.STOR_CD = X.STOR_CD
+    ),
+    -- ② 규칙 적용 : 본점·통물 = 수불 + 교환권 − H재반입 − 미인도 / T1·T2 = 수불만
+    RULED AS (
+        SELECT C.*
+          FROM COMP C
+         WHERE C.SITE IN ('MAIN', 'LOGI')
+            OR (C.SITE IN ('T1', 'T2') AND C.SRC = 'SUBUL')
+    ),
+    -- ③ 집계 : 보세구역 × 장치장 × 상품 (환급구분 D, 세관상품코드)
+    AGG AS (
+        SELECT R.WH_CODE
+             , R.SHED_CD
+             , R.GOOS_CD
+             , 'D'                                                      AS CSTM_GOODS_TYPE_CD
+             , NVL(MAX(M9.CSTM_GOOS_CD), R.GOOS_CD)                     AS NEW_CSTM_GOOS_CD
+             , MAX(R.SITE)                                              AS SITE
+             , SUM(R.QTY)                                               AS QTY
+             , SUM(CASE WHEN R.SRC = 'SUBUL'  THEN R.QTY ELSE 0 END)    AS Q_SUBUL
+             , SUM(CASE WHEN R.SRC = 'EXCH'   THEN R.QTY ELSE 0 END)    AS Q_EXCH
+             , SUM(CASE WHEN R.SRC = 'HREENT' THEN R.QTY ELSE 0 END)    AS Q_HREENT
+             , SUM(CASE WHEN R.SRC = 'UDLV'   THEN R.QTY ELSE 0 END)    AS Q_UDLV
+          FROM RULED R
+          LEFT JOIN MA9301C M9
+            ON M9.COMP_CD            = '01'
+           AND M9.USE_YN             = 'Y'
+           AND M9.GOOS_CD            = R.GOOS_CD
+           AND M9.CSTM_GOODS_TYPE_CD = 'D'
+         GROUP BY R.WH_CODE, R.SHED_CD, R.GOOS_CD
+        HAVING SUM(R.QTY) > 0
+    )
+    SELECT A.*
+         , D.STOR_NM
+         -- 채번 접두 : 세관(3) + 과(2) + 보세구역(8) + 년도(2) + 'A'
+         , N.COMM_PROP_CONT_1 || N.COMM_PROP_CONT_2 || A.WH_CODE
+           || TO_CHAR(SYSDATE, 'YY') || 'A'                             AS NO_PREFIX
+         , WP.HS_CD
+         , WP.CSTM_GOOS_NM
+         , WP.STDZ_CONT
+         , WP.GOOS_CAPA
+         , WM.BRAN_CD
+         , WB.BRAN_NM
+         , WP.SIZE_UNIT_CD
+         , WI.MNGE_LVL_CD
+         , WP.REF_NO
+      FROM AGG A
+      LEFT JOIN BOND D
+        ON D.BOND_GRN_CD = A.WH_CODE
+      LEFT JOIN MA0151D N
+        ON N.COMP_CD         = '01'
+       AND N.WRK_MDUL_CD     = 'MA'
+       AND N.COMM_CTG_CD     = 'MA041'
+       AND N.COMM_CTG_DTL_CD = A.WH_CODE
+      LEFT JOIN WM0310C WM                                         -- GWP 기본
+        ON WM.COMP_CD = '01'
+       AND WM.GOOS_CD = A.GOOS_CD
+      LEFT JOIN MA0030C WB                                         -- 브랜드
+        ON WB.COMP_CD = WM.COMP_CD
+       AND WB.BRAN_CD = WM.BRAN_CD
+      LEFT JOIN WM0314C WP                                         -- GWP 상품속성
+        ON WP.COMP_CD = '01'
+       AND WP.GOOS_CD = A.GOOS_CD
+      LEFT JOIN WM0310I WI                                         -- GWP 추가정보
+        ON WI.COMP_CD = '01'
+       AND WI.GOOS_CD = A.GOOS_CD
+     ORDER BY A.WH_CODE, A.SHED_CD, A.NEW_CSTM_GOOS_CD, A.GOOS_CD;
+
+BEGIN
+    DBMS_OUTPUT.ENABLE(NULL);
+
+    SELECT COUNT(*) INTO V_EXIST FROM TMP_ITEMCARRYIN_H WHERE MIG_STEP = 3;
+    IF V_EXIST > 0 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'STEP 3 이 이미 TMP 에 있음 → DELETE (H/D, MIG_STEP = 3) 후 실행');
+    END IF;
+
+    SAVEPOINT SP_STEP3;
+
+    FOR R IN C_SRC LOOP
+        V_CUR_KEY := R.WH_CODE || '/' || R.SHED_CD || '/' || R.GOOS_CD;
+
+        -- 새 신고서 : 보세구역·장치장이 바뀌거나 9,999 품목 찼을 때
+        IF V_BOND IS NULL OR R.WH_CODE <> V_BOND OR R.SHED_CD <> V_SHED OR V_SEQ >= 9999 THEN
+
+            IF R.NO_PREFIX IS NULL OR LENGTH(R.NO_PREFIX) < 16 THEN
+                RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 (MA041 세관·과 코드 확인) : ' || R.WH_CODE);
+            END IF;
+
+            V_GRP      := V_GRP + 1;
+            V_DECL_KEY := 'S3|' || R.WH_CODE || '|' || R.SHED_CD || '|' || LPAD(V_GRP, 4, '0');
+
+            INSERT INTO TMP_ITEMCARRYIN_H
+            (
+                  MIG_STEP, BASE_DT, LOAD_DTTM
+                , DECLARATION_NO, WH_CODE, DOC_TYPE, DECLARATION_DATE, AMEND_TYPE, CARRYIN_LOC
+                , REFERENCE_NO, DECLARATION_TYPE, STATUS, C_DATETIME, INTERNATIONAL_MAIL_YN
+                , REF_STOR_NM, REF_SITE, DECL_KEY, NO_PREFIX
+            )
+            VALUES
+            (
+                  3, V_BASE_DT, SYSDATE
+                , NULL                                                         --  1 신고번호 ([채번] 블록에서)
+                , R.WH_CODE                                                    --  2 신고지점
+                , 'DLG'                                                        --  3 문서구분
+                , V_DECL_DT                                                    --  4 신고일자
+                , NULL                                                         --  5 정정구분
+                , CASE WHEN R.SHED_CD = R.WH_CODE THEN NULL ELSE R.SHED_CD END --  6 반입장치장소 (통물이면 값)
+                , NULL                                                         --  7 근거번호
+                , 'Z'                                                          --  8 신고구분 기초재고반입
+                , 'A1'                                                         --  9 상태
+                , SYSDATE                                                      -- 10 생성일시
+                , NULL                                                         -- 11 국제우편여부
+                , R.STOR_NM, R.SITE, V_DECL_KEY, R.NO_PREFIX
+            );
+
+            V_BOND  := R.WH_CODE;
+            V_SHED  := R.SHED_CD;
+            V_SEQ   := 0;
+            V_H_CNT := V_H_CNT + 1;
+        END IF;
+
+        V_SEQ := V_SEQ + 1;
+
+        INSERT INTO TMP_ITEMCARRYIN_D
+        (
+              MIG_STEP, BASE_DT, LOAD_DTTM
+            , DECLARATION_NO, WH_CODE, DOC_TYPE, DOC_SEQ, RAMEND_TYPE, ITEM_TYPE, HS_CODE, ITEM_CODE
+            , ITEM_NAME, ITEM_NORM, ITEM_QTY, ITEM_COST, ITEM_AMOUNT, CAPACITY, BRAND_CODE, BRAND_NAME
+            , UNIT_CODE, GWP_PRODUCT_GRADE, REGISTER_NO, ITEM_COST_KRW, QTY_UNIT_CODE
+            , REF_STOR_NM, REF_SHED_CD, REF_SITE, REF_GOOS_CD, REF_GOOS_GWP, REF_REF_NO
+            , REF_Q_SUBUL, REF_Q_EXCH, REF_Q_HREENT, REF_Q_UDLV, DECL_KEY
+        )
+        VALUES
+        (
+              3, V_BASE_DT, SYSDATE
+            , NULL                                        --  1 신고번호 ([채번] 블록에서)
+            , R.WH_CODE                                   --  2 신고지점
+            , 'DLG'                                       --  3 문서구분
+            , V_SEQ                                       --  4 품목일련번호
+            , NULL                                        --  5 란정정구분
+            , R.CSTM_GOODS_TYPE_CD                        --  6 물품구분 D
+            , R.HS_CD                                     --  7 HS코드 (WM0314C)
+            , R.NEW_CSTM_GOOS_CD                          --  8 세관신고 상품코드
+            , R.CSTM_GOOS_NM                              --  9 품명 (세관상품명)
+            , R.STDZ_CONT                                 -- 10 규격
+            , R.QTY                                       -- 11 수량
+            , 0                                           -- 12 단가(미화) GWP 0
+            , 0                                           -- 13 금액
+            , R.GOOS_CAPA                                 -- 14 용량
+            , R.BRAN_CD                                   -- 15 브랜드코드
+            , R.BRAN_NM                                   -- 16 브랜드명
+            , R.SIZE_UNIT_CD                              -- 17 용량단위 (71 ML / 73 GR)
+            , R.MNGE_LVL_CD                               -- 18 GWP물품등급 (관리등급, 확인)
+            , R.REF_NO                                    -- 19 참조번호 (보내주신 쿼리대로 REF_NO)
+            , 0                                           -- 20 단가(원화)
+            , NULL                                        -- 21 수량단위
+            , R.STOR_NM, R.SHED_CD, R.SITE, R.GOOS_CD, 'GWP', R.REF_NO
+            , R.Q_SUBUL, R.Q_EXCH, R.Q_HREENT, R.Q_UDLV, V_DECL_KEY
+        );
+
+        V_D_CNT := V_D_CNT + 1;
+        V_QTY   := V_QTY + R.QTY;
+    END LOOP;
+
+    -- Header 참고 합계
+    UPDATE TMP_ITEMCARRYIN_H H
+       SET (REF_ITEM_CNT, REF_QTY, REF_Q_SUBUL, REF_Q_EXCH, REF_Q_HREENT, REF_Q_UDLV) =
+           (SELECT COUNT(*), SUM(D.ITEM_QTY), SUM(D.REF_Q_SUBUL), SUM(D.REF_Q_EXCH), SUM(D.REF_Q_HREENT), SUM(D.REF_Q_UDLV)
+              FROM TMP_ITEMCARRYIN_D D
+             WHERE D.DECL_KEY = H.DECL_KEY)
+     WHERE H.MIG_STEP = 3;
+
+    DBMS_OUTPUT.PUT_LINE('STEP 3 SUCCESS');
+    DBMS_OUTPUT.PUT_LINE('Header(신고서) = ' || V_H_CNT);
+    DBMS_OUTPUT.PUT_LINE('Detail(품목)   = ' || V_D_CNT);
+    DBMS_OUTPUT.PUT_LINE('수량 합계      = ' || V_QTY);
+
+    IF V_DRY_RUN = 'Y' THEN
+        ROLLBACK TO SP_STEP3;
+        DBMS_OUTPUT.PUT_LINE('DRY RUN → ROLLBACK (반영 안 됨)');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('반영됨 → 건수 확인 후 COMMIT → [채번] 블록 실행');
+    END IF;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK TO SP_STEP3;
+        DBMS_OUTPUT.PUT_LINE('FAIL → 전체 ROLLBACK');
+        DBMS_OUTPUT.PUT_LINE('실패 위치 : ' || V_CUR_KEY);
+        DBMS_OUTPUT.PUT_LINE(SQLERRM);
+        RAISE;
+END;
+/
+
+/* 다시 돌릴 때
+DELETE FROM TMP_ITEMCARRYIN_D WHERE MIG_STEP = 3;
+DELETE FROM TMP_ITEMCARRYIN_H WHERE MIG_STEP = 3;
+COMMIT;
+*/

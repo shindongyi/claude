@@ -24,6 +24,7 @@
 | **sql/step1_goods_cstm.sql** | **STEP 1 (진행 중)**: 상품 기초 — 본점·T1-DF4·T2-DF4 HS세관재고, 환급코드(MA9301C) 먼저 붙이고 집계, 신고 Detail 형태 |
 | **sql/step1_goods_cstm_plsql.sql** | **STEP 1 PL/SQL 적재**: Header/Detail 쌍으로 TMP 적재 (채번은 step5 [채번] 블록) |
 | **sql/step2_goods_tongmul_plsql.sql** | **STEP 2 PL/SQL 적재**: 통물 계산재고, Header/Detail 쌍으로 TMP 적재 (채번은 step5 [채번] 블록) |
+| **sql/step3_gwp_plsql.sql** | **STEP 3 PL/SQL 적재**: GWP Z 신고 (본점·통물 계산재고 / T1·T2 수불), Header/Detail 쌍으로 TMP 적재 |
 | **sql/step4_undelivered_plsql.sql** | **STEP 4 PL/SQL 적재**: 미인도 Y 신고, Header/Detail 쌍으로 TMP 적재 |
 | **sql/step2_goods_tongmul.sql** | **STEP 2 (진행 중)**: 상품 기초 — 통합물류 계산재고 (수불 + 교환권 − H재반입), 신고 Detail/Header |
 | **sql/step3_gwp.sql** | **STEP 3**: GWP 기초 — 본점·통물 계산재고 (수불 + 교환권 − H재반입 − 미인도), T1·T2 수불재고 |
@@ -34,7 +35,9 @@
 | sql/11_insert_final.sql | (이전 버전, 참고) 최종 INSERT 3종 (상품 Z / GWP Z / 미인도 Y) — 한방 쿼리 + 품목정보 + 신고번호로 SR_ItemCarryIn_H/D 에 바로 INSERT |
 | sql/09_insert_target.sql | SR_ItemCarryIn_H / _D 에 INSERT (같은 DB: INSERT…SELECT / 다른 DB: INSERT 문 생성) |
 
-**현재 진행: `sql/12_november_simple.sql`** (12/1 실행, 기준일 11/30). 신고 INSERT 는 Q20 답을 받은 뒤 12 의 쿼리에 이어서 작성.
+**최종 실행 순서**: step5 DDL → step1/2/3/4 `_plsql` 적재 (DRY RUN Y → N → COMMIT) → step5 `2-1` 채번 → step5 검증 V1~V9 → step5 본테이블 적재. 판매미신고는 sales_unreported.sql 1 → 2 → 2-1 → 4 → 5.
+
+(이전) `sql/12_november_simple.sql` (12/1 실행, 기준일 11/30). 신고 INSERT 는 Q20 답을 받은 뒤 12 의 쿼리에 이어서 작성.
 
 실행 순서 (이전 한방 방식): 10 SELECT 로 점검 → 11 INSERT
 
