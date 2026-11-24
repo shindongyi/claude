@@ -83,6 +83,10 @@ CREATE TABLE TMP_ITEMCARRYIN_D (
     REF_Q_HREENT          NUMBER,
     REF_Q_UDLV            NUMBER
 );
+-- 채번용 컬럼 (PL/SQL 적재 → 채번 2단계 방식)
+ALTER TABLE TMP_ITEMCARRYIN_H ADD (DECL_KEY VARCHAR2(100), NO_PREFIX VARCHAR2(20));
+ALTER TABLE TMP_ITEMCARRYIN_D ADD (DECL_KEY VARCHAR2(100));
+CREATE INDEX TMP_ITEMCARRYIN_D_IX2 ON TMP_ITEMCARRYIN_D (DECL_KEY);
 CREATE INDEX TMP_ITEMCARRYIN_D_IX1 ON TMP_ITEMCARRYIN_D (DECLARATION_NO, WH_CODE, DOC_TYPE, DOC_SEQ);
 CREATE INDEX TMP_ITEMCARRYIN_H_IX1 ON TMP_ITEMCARRYIN_H (DECLARATION_NO, WH_CODE, DOC_TYPE);
 
@@ -107,6 +111,60 @@ CREATE INDEX TMP_ITEMCARRYIN_H_IX1 ON TMP_ITEMCARRYIN_H (DECLARATION_NO, WH_CODE
        SELECT 1, '20261130', SYSDATE, X.DECLARATION_NO ...   ← 마지막 SELECT 맨 앞에 세 값만 추가
    --------------------------------------------------------------------- */
 
+
+
+/* ---------------------------------------------------------------------
+   2-1. [채번] — STEP 1·2·3·4 PL/SQL 적재를 COMMIT 한 다음 실행
+        FN_MA_AUTO_NO 가 내부에서 COMMIT 하므로 적재와 분리함
+        - 신고번호가 비어 있는 Header 만 채번 → 중간에 실패해도 다시 돌리면 남은 것만 이어서 채번
+        - Header 1건마다 : 채번 1번 → Header·Detail(같은 DECL_KEY) 에 같은 번호 → COMMIT
+   --------------------------------------------------------------------- */
+DECLARE
+    V_REGR_ID   VARCHAR2(10) := 'MIG';            -- 채번 등록자 (확인)
+    V_NO        VARCHAR2(27);
+    V_CNT       NUMBER := 0;
+    V_D_CNT     NUMBER := 0;
+    V_CUR_KEY   VARCHAR2(100);
+BEGIN
+    DBMS_OUTPUT.ENABLE(NULL);
+
+    FOR H IN (SELECT ROWID AS RID, DECL_KEY, NO_PREFIX
+                FROM TMP_ITEMCARRYIN_H
+               WHERE DECLARATION_NO IS NULL
+               ORDER BY MIG_STEP, DECL_KEY)
+    LOOP
+        V_CUR_KEY := H.DECL_KEY;
+
+        IF H.NO_PREFIX IS NULL OR LENGTH(H.NO_PREFIX) < 16 THEN
+            RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 : ' || H.DECL_KEY);
+        END IF;
+
+        V_NO := FN_MA_AUTO_NO('01', 'BO15', H.NO_PREFIX, V_REGR_ID);   -- 함수 안에서 COMMIT
+
+        UPDATE TMP_ITEMCARRYIN_H SET DECLARATION_NO = V_NO WHERE ROWID    = H.RID;
+        UPDATE TMP_ITEMCARRYIN_D SET DECLARATION_NO = V_NO WHERE DECL_KEY = H.DECL_KEY;
+        V_D_CNT := V_D_CNT + SQL%ROWCOUNT;
+
+        COMMIT;
+        V_CNT := V_CNT + 1;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('채번 SUCCESS  Header = ' || V_CNT || ' / Detail = ' || V_D_CNT);
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;                                  -- 진행 중이던 1건만 되돌림 (앞서 채번된 건은 유지)
+        DBMS_OUTPUT.PUT_LINE('FAIL 위치 : ' || V_CUR_KEY);
+        DBMS_OUTPUT.PUT_LINE(SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('→ 원인 해결 후 다시 실행하면 비어 있는 것만 이어서 채번');
+        RAISE;
+END;
+/
+
+-- 채번 확인 : 0 이어야 함
+SELECT 'H_NO_NULL' CHK, COUNT(*) CNT FROM TMP_ITEMCARRYIN_H WHERE DECLARATION_NO IS NULL
+UNION ALL
+SELECT 'D_NO_NULL', COUNT(*) FROM TMP_ITEMCARRYIN_D WHERE DECLARATION_NO IS NULL;
 
 /* ---------------------------------------------------------------------
    3. 검증  (모두 0건 / 일치가 정상)

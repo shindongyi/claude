@@ -7,13 +7,15 @@
    우선   : 당일(신고일) 출국 1 → 이후 출국 2 → 출국일 지남·없음 3
 
    신고번호 : 채번 함수 FN_MA_AUTO_NO 로 발급 (신고서 = 교환권 1건마다 1번만 호출)
+              ※ 함수가 내부에서 COMMIT → 적재(2)와 채번(2-1)을 나눔
               FN_MA_AUTO_NO( 회사코드
                            , 'MA76'                                  -- MA053 채번구분 : 판매신고
                            , 세관(MA041 속성1) || 과(MA041 속성2) || 보세구역 || 년도(YY) || 'C'
                            , 등록자ID )
 
    순서   : 1) TEMP DDL
-            2) PL/SQL 적재  ← 교환권마다 채번 1번 → Header → 같은 번호로 Detail
+            2)   PL/SQL 적재 ← 교환권마다 Header → Detail (신고번호는 비워 둠, DRY RUN 가능)
+            2-1) 채번        ← 우선순위 순으로 교환권마다 채번 → Header·Detail 에 같은 번호
             4) 검증
             5) 본테이블 적재
    ========================================================================== */
@@ -48,6 +50,7 @@ CREATE TABLE TMP_SALES_H
     , EXCHANGE_RATE            NUMBER
     , ELECTRONIC_COMMERCE_YN   VARCHAR2(1)
     , CARRYOUT_LOC             VARCHAR2(8)
+    , NO_PREFIX                VARCHAR2(20)              -- 채번 접두
     -- 참고 (Detail 연결키 + 검토용)
     , REF_COMP_CD              VARCHAR2(2)
     , REF_STOR_CD              VARCHAR2(10)
@@ -98,13 +101,13 @@ CREATE TABLE TMP_SALES_D
 /* ==========================================================================
    2) Header + Detail 적재 (PL/SQL) — 교환권 1건마다
         ① 품목 있는지 확인 (없으면 건너뜀 → 번호 안 씀)
-        ② FN_MA_AUTO_NO 로 채번 1번
+        ② (채번은 2-1 에서)
         ③ Header 1건
         ④ 그 교환권의 상품 + GWP 를 같은 신고번호로 Detail
       우선순위(당일 출국 → 이후 → 지남) 순으로 돌기 때문에 당일 출국 건이 앞 번호를 받음
 
    사용법 : V_DRY_RUN = 'Y' 로 먼저 (끝나면 ROLLBACK) → 'N' 으로 실행 → 건수 확인 후 COMMIT
-   ※ 채번 함수 안에서 COMMIT 하면 SAVEPOINT 가 지워짐 → 함수 소스 확인 (AUTONOMOUS 면 OK, 단 번호는 소모)
+   ※ 신고번호는 비워 두고 2-1 [채번] 에서 부여 (함수 내부 COMMIT 때문)
    ========================================================================== */
 DECLARE
     V_DRY_RUN     VARCHAR2(1)  := 'Y';            -- Y: 끝나고 ROLLBACK / N: 반영
@@ -246,8 +249,8 @@ BEGIN
             RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 (MA041 세관·과 코드 확인) : ' || R.WH_CODE);
         END IF;
 
-        -- ② 채번
-        V_DECL_NO := FN_MA_AUTO_NO(R.COMP_CD, 'MA76', R.NO_PREFIX, V_REGR_ID);
+        -- ② 채번은 2-1 블록에서 (여기서는 NULL)
+        V_DECL_NO := NULL;
 
         -- ③ Header
         INSERT INTO TMP_SALES_H
@@ -255,7 +258,7 @@ BEGIN
               DECLARATION_NO, WH_CODE, DOC_TYPE, DECLARATION_DATE, AMEND_TYPE, DECLARATION_TYPE, STATUS, C_DATETIME
             , SALE_DATE, ITEM_AMEND_TYPE, DELIVERY_METHOD, DOMESTIC_TYPE, BUYER_NAME, NATIONALITY, EXCHANGE_NO
             , PERSONAL_TYPE, PERSONAL_VALUE, BIRTH_DATE, DEPARTURE_ARRIVE_TYPE, DEPARTURE_ARRIVE_DATE, FLIGHT_NO
-            , EXCHANGE_RATE, ELECTRONIC_COMMERCE_YN, CARRYOUT_LOC
+            , EXCHANGE_RATE, ELECTRONIC_COMMERCE_YN, CARRYOUT_LOC, NO_PREFIX
             , REF_COMP_CD, REF_STOR_CD, REF_SALE_DT, REF_POS_NO, REF_RCPT_NO
             , REF_PRIORITY, REF_BILL_STAT, REF_GOOS_LOC, REF_NATI_CD, REF_NET_USD
         )
@@ -285,6 +288,7 @@ BEGIN
             , R.EXCHANGE_RATE           -- 22 환율
             , R.ELECTRONIC_COMMERCE_YN  -- 23 전자상거래 여부
             , R.CARRYOUT_LOC            -- 24 반출장치장소
+            , R.NO_PREFIX
             , R.COMP_CD, R.STOR_CD, R.SALE_DT, R.POS_NO, R.RCPT_NO
             , R.PRIORITY, R.BILL_PROC_CLS_CD, R.GOOS_LOC_CLS_CD, R.NATI_CD, R.NET_SELL_DOLR_AMT
         );
@@ -419,6 +423,51 @@ DELETE FROM TMP_SALES_D;
 DELETE FROM TMP_SALES_H;
 COMMIT;
 */
+
+
+/* ==========================================================================
+   2-1) 채번 — 2) 를 COMMIT 한 다음 실행
+        신고번호 빈 교환권만, 당일 출국 → 이후 → 지남 순으로 1건씩 채번 + COMMIT
+        중간에 실패해도 다시 돌리면 남은 것만 이어서 채번
+   ========================================================================== */
+DECLARE
+    V_REGR_ID   VARCHAR2(10) := 'MIG';            -- 채번 등록자 (확인)
+    V_NO        VARCHAR2(27);
+    V_CNT       NUMBER := 0;
+    V_CUR_BILL  VARCHAR2(30);
+BEGIN
+    DBMS_OUTPUT.ENABLE(NULL);
+
+    FOR H IN (SELECT ROWID AS RID, EXCHANGE_NO, NO_PREFIX
+                FROM TMP_SALES_H
+               WHERE DECLARATION_NO IS NULL
+               ORDER BY REF_PRIORITY, DEPARTURE_ARRIVE_DATE, SALE_DATE, EXCHANGE_NO)
+    LOOP
+        V_CUR_BILL := H.EXCHANGE_NO;
+
+        IF H.NO_PREFIX IS NULL OR LENGTH(H.NO_PREFIX) < 16 THEN
+            RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 : ' || H.EXCHANGE_NO);
+        END IF;
+
+        V_NO := FN_MA_AUTO_NO('01', 'MA76', H.NO_PREFIX, V_REGR_ID);   -- 함수 안에서 COMMIT
+
+        UPDATE TMP_SALES_H SET DECLARATION_NO = V_NO WHERE ROWID           = H.RID;
+        UPDATE TMP_SALES_D SET DECLARATION_NO = V_NO WHERE REF_EXCHANGE_NO = H.EXCHANGE_NO;
+
+        COMMIT;
+        V_CNT := V_CNT + 1;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('채번 SUCCESS  교환권 = ' || V_CNT);
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('FAIL 교환권 : ' || V_CUR_BILL);
+        DBMS_OUTPUT.PUT_LINE(SQLERRM);
+        RAISE;
+END;
+/
 
 
 /* ==========================================================================

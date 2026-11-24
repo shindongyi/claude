@@ -8,14 +8,15 @@
 
    - 조회 로직은 SELECT 버전(step2_goods_tongmul.sql)과 동일, 적재만 LOOP 로
    - (보세구역, 장치장) 바뀔 때 또는 9,999 품목 찰 때 → 채번 1번 + Header 1건, 그 아래 Detail
-   - 채번 : FN_MA_AUTO_NO('01', 'BO15', 세관 || 과 || 보세구역 || YY || 'A', 등록자)
+   - 채번 : 여기서는 안 함. 신고서마다 DECL_KEY + NO_PREFIX(세관||과||보세구역||YY||'A') 만 저장
    - 신고지점 = 점의 보세구역, 반입장치장소 = 통물 장치장 (04077090 제2 / 04077137 은산)
    - 적재 대상 : TMP_ITEMCARRYIN_H / TMP_ITEMCARRYIN_D (MIG_STEP = 2)
    - 통물 코너가 아닌 곳에 잡힌 교환권·H재반입(장치장 '미매핑:코너')은 적재 안 하고 건수만 출력
 
    사용법 : V_DRY_RUN = 'Y' 로 먼저 (끝나면 ROLLBACK) → 'N' 으로 실행 → 건수 확인 후 COMMIT
    ※ 빌상태·상품위치는 현재 상태 값 → 12/1 영업 시작 전 실행
-   ※ 채번 함수 안에서 COMMIT 하면 SAVEPOINT 가 지워짐 → 함수 소스 확인
+   ※ FN_MA_AUTO_NO 가 내부에서 COMMIT 함 → 이 블록에서는 채번 안 함 (DRY RUN·ROLLBACK 이 정상 동작)
+     신고번호는 적재 후 step5_tmp_load.sql 의 [채번] 블록에서 DECL_KEY 별로 한 번에 부여
    ========================================================================== */
 DECLARE
     V_DRY_RUN     VARCHAR2(1)  := 'Y';            -- Y: 끝나고 ROLLBACK / N: 반영
@@ -24,7 +25,9 @@ DECLARE
     V_YMON        VARCHAR2(6)  := '202611';       -- 수불 년월
     V_DECL_DT     VARCHAR2(8)  := '20261201';     -- 신고일자
 
-    V_DECL_NO     VARCHAR2(27);
+    V_DECL_NO     VARCHAR2(27) := NULL;          -- 채번은 [채번] 블록에서
+    V_DECL_KEY    VARCHAR2(100);
+    V_GRP         NUMBER := 0;
     V_BOND        VARCHAR2(20);
     V_SHED        VARCHAR2(30);
     V_SEQ         NUMBER := 0;
@@ -298,14 +301,15 @@ BEGIN
                 RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 (MA041 세관·과 코드 확인) : ' || R.BOND_GRN_CD);
             END IF;
 
-            V_DECL_NO := FN_MA_AUTO_NO('01', 'BO15', R.NO_PREFIX, V_REGR_ID);
+            V_GRP      := V_GRP + 1;
+            V_DECL_KEY := 'S2|' || R.BOND_GRN_CD || '|' || R.SHED_CD || '|' || LPAD(V_GRP, 4, '0');
 
             INSERT INTO TMP_ITEMCARRYIN_H
             (
                   MIG_STEP, BASE_DT, LOAD_DTTM
                 , DECLARATION_NO, WH_CODE, DOC_TYPE, DECLARATION_DATE, AMEND_TYPE, CARRYIN_LOC
                 , REFERENCE_NO, DECLARATION_TYPE, STATUS, C_DATETIME, INTERNATIONAL_MAIL_YN
-                , REF_STOR_NM, REF_SITE
+                , REF_STOR_NM, REF_SITE, DECL_KEY, NO_PREFIX
             )
             VALUES
             (
@@ -321,7 +325,7 @@ BEGIN
                 , 'A1'                   --  9 상태
                 , SYSDATE                -- 10 생성일시
                 , NULL                   -- 11 국제우편여부
-                , R.STOR_NM, 'LOGI'
+                , R.STOR_NM, 'LOGI', V_DECL_KEY, R.NO_PREFIX
             );
 
             V_BOND  := R.BOND_GRN_CD;
@@ -339,7 +343,7 @@ BEGIN
             , ITEM_NAME, ITEM_NORM, ITEM_QTY, ITEM_COST, ITEM_AMOUNT, CAPACITY, BRAND_CODE, BRAND_NAME
             , UNIT_CODE, GWP_PRODUCT_GRADE, REGISTER_NO, ITEM_COST_KRW, QTY_UNIT_CODE
             , REF_STOR_NM, REF_SHED_CD, REF_SITE, REF_GOOS_CD, REF_GOOS_GWP, REF_MATCH_BY, REF_REF_NO
-            , REF_Q_SUBUL, REF_Q_EXCH, REF_Q_HREENT, REF_Q_UDLV
+            , REF_Q_SUBUL, REF_Q_EXCH, REF_Q_HREENT, REF_Q_UDLV, DECL_KEY
         )
         VALUES
         (
@@ -366,7 +370,7 @@ BEGIN
             , NULL                                        -- 20 단가(원화)
             , NULL                                        -- 21 수량단위
             , R.STOR_NM, R.SHED_CD, 'LOGI', R.GOOS_CD, '상품', R.MATCH_BY, R.REF_NO
-            , R.Q_SUBUL, R.Q_EXCH, R.Q_HREENT, R.Q_UDLV
+            , R.Q_SUBUL, R.Q_EXCH, R.Q_HREENT, R.Q_UDLV, V_DECL_KEY
         );
 
         V_D_CNT := V_D_CNT + 1;
@@ -379,8 +383,7 @@ BEGIN
            (SELECT COUNT(*), SUM(D.ITEM_QTY), SUM(D.REF_Q_SUBUL), SUM(D.REF_Q_EXCH), SUM(D.REF_Q_HREENT), SUM(D.REF_Q_UDLV)
               FROM TMP_ITEMCARRYIN_D D
              WHERE D.MIG_STEP       = 2
-               AND D.DECLARATION_NO = H.DECLARATION_NO
-               AND D.WH_CODE        = H.WH_CODE)
+               AND D.DECL_KEY       = H.DECL_KEY)
      WHERE H.MIG_STEP = 2;
 
     DBMS_OUTPUT.PUT_LINE('STEP 2 SUCCESS');

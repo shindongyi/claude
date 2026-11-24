@@ -4,16 +4,15 @@
    - 조회 로직은 SELECT 버전(step1_goods_cstm.sql)과 동일, 적재만 LOOP 로
    - (보세구역, 장치장) 바뀔 때 또는 품목 9,999 건 찰 때 → 채번 1번 + Header 1건
      그 아래 품목은 같은 신고번호로 Detail → Header-Detail 쌍 보장
-   - 채번 : FN_MA_AUTO_NO('01', 'BO15'(물품반입신고번호),
-                          세관(MA041 속성1) || 과(MA041 속성2) || 보세구역 || YY || 'A', 등록자)
+   - 채번 : 여기서는 안 함. 신고서마다 DECL_KEY + NO_PREFIX(세관||과||보세구역||YY||'A') 만 저장
    - 적재 대상 : TMP_ITEMCARRYIN_H / TMP_ITEMCARRYIN_D (MIG_STEP = 1)   ※ DDL 은 step5_tmp_load.sql
 
    사용법
      1) V_DRY_RUN = 'Y' 로 실행 → DBMS_OUTPUT 건수 확인 (끝나면 자동 ROLLBACK)
      2) 이상 없으면 V_DRY_RUN = 'N' 으로 실행 → 건수 확인 후 COMMIT
      ※ DBMS_OUTPUT 켜고 실행
-     ※ 채번 함수 안에서 COMMIT 하면 SAVEPOINT 가 지워져 ROLLBACK TO 가 실패함 → 함수 소스 확인
-        (PRAGMA AUTONOMOUS_TRANSACTION 이면 문제 없음. 단 DRY RUN 이어도 번호는 소모됨 → 개발기에서 먼저)
+     ※ FN_MA_AUTO_NO 가 내부에서 COMMIT 함 → 이 블록에서는 채번 안 함 (DRY RUN·ROLLBACK 이 정상 동작)
+        신고번호는 적재 후 step5_tmp_load.sql 의 [채번] 블록에서 DECL_KEY 별로 한 번에 부여
    ========================================================================== */
 DECLARE
     V_DRY_RUN     VARCHAR2(1)  := 'Y';            -- Y: 끝나고 ROLLBACK / N: 반영
@@ -21,7 +20,9 @@ DECLARE
     V_BASE_DT     VARCHAR2(8)  := '20261130';     -- 기준일
     V_DECL_DT     VARCHAR2(8)  := '20261201';     -- 신고일자
 
-    V_DECL_NO     VARCHAR2(27);
+    V_DECL_NO     VARCHAR2(27) := NULL;          -- 채번은 [채번] 블록에서
+    V_DECL_KEY    VARCHAR2(100);
+    V_GRP         NUMBER := 0;
     V_BOND        VARCHAR2(20);
     V_SHED        VARCHAR2(20);
     V_SEQ         NUMBER := 0;
@@ -161,14 +162,15 @@ BEGIN
                 RAISE_APPLICATION_ERROR(-20002, '채번 접두 이상 (MA041 세관·과 코드 확인) : ' || R.BOND_GRN_CD);
             END IF;
 
-            V_DECL_NO := FN_MA_AUTO_NO('01', 'BO15', R.NO_PREFIX, V_REGR_ID);
+            V_GRP      := V_GRP + 1;
+            V_DECL_KEY := 'S1|' || R.BOND_GRN_CD || '|' || R.SHED_CD || '|' || LPAD(V_GRP, 4, '0');
 
             INSERT INTO TMP_ITEMCARRYIN_H
             (
                   MIG_STEP, BASE_DT, LOAD_DTTM
                 , DECLARATION_NO, WH_CODE, DOC_TYPE, DECLARATION_DATE, AMEND_TYPE, CARRYIN_LOC
                 , REFERENCE_NO, DECLARATION_TYPE, STATUS, C_DATETIME, INTERNATIONAL_MAIL_YN
-                , REF_STOR_NM, REF_SITE
+                , REF_STOR_NM, REF_SITE, DECL_KEY, NO_PREFIX
             )
             VALUES
             (
@@ -184,7 +186,7 @@ BEGIN
                 , 'A1'                                                             --  9 상태
                 , SYSDATE                                                          -- 10 생성일시
                 , NULL                                                             -- 11 국제우편여부
-                , R.STOR_NM, 'OWN'
+                , R.STOR_NM, 'OWN', V_DECL_KEY, R.NO_PREFIX
             );
 
             V_BOND  := R.BOND_GRN_CD;
@@ -201,7 +203,7 @@ BEGIN
             , DECLARATION_NO, WH_CODE, DOC_TYPE, DOC_SEQ, RAMEND_TYPE, ITEM_TYPE, HS_CODE, ITEM_CODE
             , ITEM_NAME, ITEM_NORM, ITEM_QTY, ITEM_COST, ITEM_AMOUNT, CAPACITY, BRAND_CODE, BRAND_NAME
             , UNIT_CODE, GWP_PRODUCT_GRADE, REGISTER_NO, ITEM_COST_KRW, QTY_UNIT_CODE
-            , REF_STOR_NM, REF_SHED_CD, REF_SITE, REF_GOOS_CD, REF_GOOS_GWP, REF_MATCH_BY, REF_REF_NO, REF_Q_CSTM
+            , REF_STOR_NM, REF_SHED_CD, REF_SITE, REF_GOOS_CD, REF_GOOS_GWP, REF_MATCH_BY, REF_REF_NO, REF_Q_CSTM, DECL_KEY
         )
         VALUES
         (
@@ -227,7 +229,7 @@ BEGIN
             , R.REF_NO                                    -- 19 참조번호
             , NULL                                        -- 20 단가(원화)
             , NULL                                        -- 21 수량단위
-            , R.STOR_NM, R.SHED_CD, 'OWN', R.GOOS_CD, '상품', R.MATCH_BY, R.REF_NO, R.QTY
+            , R.STOR_NM, R.SHED_CD, 'OWN', R.GOOS_CD, '상품', R.MATCH_BY, R.REF_NO, R.QTY, V_DECL_KEY
         );
 
         V_D_CNT := V_D_CNT + 1;
@@ -240,8 +242,7 @@ BEGIN
            (SELECT COUNT(*), SUM(D.ITEM_QTY), SUM(D.REF_Q_CSTM)
               FROM TMP_ITEMCARRYIN_D D
              WHERE D.MIG_STEP       = 1
-               AND D.DECLARATION_NO = H.DECLARATION_NO
-               AND D.WH_CODE        = H.WH_CODE)
+               AND D.DECL_KEY       = H.DECL_KEY)
      WHERE H.MIG_STEP = 1;
 
     DBMS_OUTPUT.PUT_LINE('STEP 1 SUCCESS');
