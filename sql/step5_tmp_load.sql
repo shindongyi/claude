@@ -214,17 +214,18 @@ SELECT D.WH_CODE, NVL(H.CARRYIN_LOC, '(자기장치장)') CARRYIN_LOC, D.ITEM_CO
 HAVING COUNT(DISTINCT D.MIG_STEP) > 1;
 -- ※ LISTAGG(DISTINCT ...) 가 안 되는 버전(19c 미만)이면 MIN(MIG_STEP), MAX(MIG_STEP) 로 바꿔서
 
--- V8. 미인도 대사: STEP 1·2·3 에서 뺀 미인도(REF_Q_UDLV 음수) = STEP 4 의 Y 수량 (보세구역·장치장별)
+-- V8. 미인도 대사 (통물만): STEP 2·3 에서 뺀 미인도(REF_Q_UDLV 음수) = STEP 4 의 Y 수량 중 통물 장치장분
+--     ※ 본점 자기 장치장 미인도는 STEP 1 에서 안 빼므로 대사 대상 아님 (B 쪽에만 나오면 정상)
 SELECT NVL(A.WH_CODE, B.WH_CODE) WH_CODE, NVL(A.SHED_CD, B.SHED_CD) SHED_CD,
        A.MINUS_QTY, B.Y_QTY, NVL(A.MINUS_QTY, 0) - NVL(B.Y_QTY, 0) DIFF
   FROM (SELECT WH_CODE, REF_SHED_CD SHED_CD, -SUM(REF_Q_UDLV) MINUS_QTY
-          FROM TMP_ITEMCARRYIN_D WHERE MIG_STEP IN (1, 2, 3) GROUP BY WH_CODE, REF_SHED_CD) A
+          FROM TMP_ITEMCARRYIN_D WHERE MIG_STEP IN (2, 3) GROUP BY WH_CODE, REF_SHED_CD) A
   FULL OUTER JOIN
        (SELECT WH_CODE, REF_SHED_CD SHED_CD, SUM(ITEM_QTY) Y_QTY
           FROM TMP_ITEMCARRYIN_D WHERE MIG_STEP = 4 GROUP BY WH_CODE, REF_SHED_CD) B
     ON B.WH_CODE = A.WH_CODE AND B.SHED_CD = A.SHED_CD
  ORDER BY 1, 2;
--- ※ 차이가 나는 대표 원인: STEP 1·2·3 에서 "0 이하라 신고 제외"된 상품의 미인도분 (그 상품은 Z 에 안 나와서 REF_Q_UDLV 도 빠짐)
+-- ※ 차이가 나는 대표 원인: STEP 2·3 에서 "0 이하라 신고 제외"된 상품의 미인도분 (그 상품은 Z 에 안 나와서 REF_Q_UDLV 도 빠짐)
 
 -- V9. 구코드 / 환급코드 미매칭 / 매핑 방식 요약
 SELECT MIG_STEP, REF_GOOS_GWP, ITEM_TYPE, REF_MATCH_BY, COUNT(*) CNT, SUM(ITEM_QTY) QTY
