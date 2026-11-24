@@ -22,11 +22,12 @@
 | sql/08_declaration_output.sql | 세관 신고 Header/Detail 생성 (스테이징) |
 | sql/10_one_shot.sql | (이전 버전, 참고) 한방 쿼리 3종 (① 상품 Z ② GWP Z ③ 미인도 Y) — 스테이징 없이 신고 Detail 직전 결과 |
 | **sql/step1_goods_cstm.sql** | **STEP 1 (진행 중)**: 상품 기초 — 본점·T1-DF4·T2-DF4 HS세관재고, 환급코드(MA9301C) 먼저 붙이고 집계, 신고 Detail 형태 |
+| **sql/step1_goods_cstm_plsql.sql** | **STEP 1 PL/SQL 적재**: 채번(FN_MA_AUTO_NO, BO15) + Header/Detail 쌍으로 TMP 적재 |
 | **sql/step2_goods_tongmul.sql** | **STEP 2 (진행 중)**: 상품 기초 — 통합물류 계산재고 (수불 + 교환권 − H재반입), 신고 Detail/Header |
 | **sql/step3_gwp.sql** | **STEP 3**: GWP 기초 — 본점·통물 계산재고 (수불 + 교환권 − H재반입 − 미인도), T1·T2 수불재고 |
 | **sql/step4_undelivered.sql** | **STEP 4**: 상품·GWP 미인도 기초 — 미인도반입면장 교환권, 신고구분 Y (교환권번호별) |
 | **sql/step5_tmp_load.sql** | **STEP 5**: TEMP DDL(H/D) → STEP 1~4 적재 방법 → 검증 V1~V9 → 본테이블 적재 |
-| **sql/sales_unreported.sql** | **판매미신고** (별개 건): 본점, 빌상태 01·02 × 상품위치 01·02·11·12, 당일 출국 우선. 채번 함수 FN_MA_AUTO_NO → Header 먼저 적재, Detail 은 Header 번호 사용 → 판매신고서 SR_Sales_H / _D |
+| **sql/sales_unreported.sql** | **판매미신고** (별개 건): 본점, 빌상태 01·02 × 상품위치 01·02·11·12, 당일 출국 우선. PL/SQL LOOP: 교환권마다 채번(MA76) → Header → Detail → 판매신고서 SR_Sales_H / _D |
 | sql/12_november_simple.sql | **현재 기준 (권장)**: 11/30 기준, 고객 쿼리 모양을 살린 단순 버전. **테이블·뷰 생성 없이 SELECT 4개** (계산재고 / 세관재고 / 미인도 / 대사) |
 | sql/11_insert_final.sql | (이전 버전, 참고) 최종 INSERT 3종 (상품 Z / GWP Z / 미인도 Y) — 한방 쿼리 + 품목정보 + 신고번호로 SR_ItemCarryIn_H/D 에 바로 INSERT |
 | sql/09_insert_target.sql | SR_ItemCarryIn_H / _D 에 INSERT (같은 DB: INSERT…SELECT / 다른 DB: INSERT 문 생성) |
