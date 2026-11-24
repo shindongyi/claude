@@ -1,10 +1,10 @@
 /* =====================================================================
    판매미신고 — 판매(정정)신고서 SR_Sales_H / SR_Sales_D            기준일 2026-11-30
    ---------------------------------------------------------------------
-   대상 : 판매취소 아닌 정상매출 빌 중
-            빌상태(BILL_PROC_CLS_CD, BO015)   01 면장등록 / 02 면장확정
-          × 상품위치(GOOS_LOC_CLS_CD, BO014) 01 점창고 / 02 통물창고 / 11 점미래보세 / 12 통물미래보세
-          (2 × 4 = 8개 조합)
+   대상 : 본점(05) 판매분 중 판매취소 확정되지 않은 모든 교환권
+            빌상태(BILL_PROC_CLS_CD, BO015)   00 매출 / 01 면장등록 / 02 면장확정
+          × 상품위치(GOOS_LOC_CLS_CD, BO014) 01 점포(점창고) / 02 통물 / 11 점미래보세 / 12 통물미래보세
+   우선순위 : 당일(신고일) 출국 1 → 이후 출국 2 → 출국일 지남·없음 3  (신고번호도 이 순서로 부여)
    단위 : 교환권(빌) 1건 = 판매신고서 1건 (Header 1행), 품목 = 상품(SA0103D) + GWP(SA0109D)
    신고번호 : 세관(3)+과(2)+보세구역(8)+년도(2)+구분코드 'C'(판매)+일련번호(8)   문서구분 DL8
    - 고객 쿼리 "1. 매출조회 기본" 기반 (판매취소 판정은 다른 날 취소 포함)
@@ -14,20 +14,27 @@
    ===================================================================== */
 
 
-/* [확인 1] 대상 빌 분포 — 점 × 빌상태 × 상품위치 */
-SELECT A.STOR_CD, A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD,
+/* [확인 1] 대상 빌 분포 — 빌상태 × 상품위치 × 출국 우선순위 (본점) */
+SELECT A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD,
+       CASE WHEN A.DPAT_DT = '20261201' THEN '1 당일출국'
+            WHEN A.DPAT_DT > '20261201' THEN '2 이후출국'
+            ELSE '3 출국일 지남/없음' END PRIORITY,
        COUNT(*) BILL_CNT, SUM(A.GOOS_QTY) QTY, SUM(A.NET_SELL_DOLR_AMT) USD
   FROM SA0100M A
  WHERE A.COMP_CD = '01'
+   AND A.STOR_CD = '05'
    AND A.SALE_TYPE_CD = '1'
    AND A.SALE_DT <= '20261130'
-   AND A.BILL_PROC_CLS_CD IN ('01', '02')
+   AND A.BILL_PROC_CLS_CD IN ('00', '01', '02')
    AND A.GOOS_LOC_CLS_CD  IN ('01', '02', '11', '12')
    AND NOT EXISTS (SELECT 1 FROM SA0100M E
                     WHERE E.COMP_CD = A.COMP_CD AND E.STOR_CD = A.STOR_CD AND E.BILL_NO = A.BILL_NO
                       AND E.SALE_TYPE_CD != A.SALE_TYPE_CD AND E.SALE_DT <= '20261130')
- GROUP BY A.STOR_CD, A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD
- ORDER BY 1, 2, 3;
+ GROUP BY A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD,
+          CASE WHEN A.DPAT_DT = '20261201' THEN '1 당일출국'
+               WHEN A.DPAT_DT > '20261201' THEN '2 이후출국'
+               ELSE '3 출국일 지남/없음' END
+ ORDER BY 3, 1, 2;
 
 /* [확인 2] SA0109D(GWP 매출)의 GOOS_CD 가 GWP 자체 코드인지, 본품 코드인지
      - 신고 양식에 "GWP연계상품코드 = GWP 제공 시 본품의 상품코드" 항목이 있음
@@ -51,19 +58,16 @@ SELECT CASE WHEN W.GOOS_CD IS NOT NULL THEN 'GWP마스터' WHEN M.GOOS_CD IS NOT
    ===================================================================== */
 WITH
 PRM AS (SELECT '01' COMP_CD, '20261130' BASE_DT, '20261201' DECL_DT FROM DUAL),
-BOND AS (                                    -- 판매점 ↔ 보세구역 + 신고구분·인도방법 (확인)
-    -- 신고구분: E 인도장 인도판매 / J 출국장면세점 인도판매     인도방법: E 출국장인도장 / A 현장인도
-    SELECT '05' STOR_CD, '본점'   STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX,
-           'E' DECL_TYPE, 'E' DELIV_METHOD FROM DUAL UNION ALL
-    SELECT '15', 'T1-DF4', '04021040', '040', '21', '?', 'J', 'A' FROM DUAL UNION ALL
-    SELECT '17', 'T2-DF4', '04021041', '040', '21', '?', 'J', 'A' FROM DUAL
+BOND AS (                                    -- 본점만 (신고구분 E 인도장 인도판매 / 인도방법 E 출국장인도장 — 확인)
+    SELECT '05' STOR_CD, '본점' STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX,
+           'E' DECL_TYPE, 'E' DELIV_METHOD FROM DUAL
 ),
 TONG AS (                                    -- 통물 코너 → 통물 장치장 (재고 STEP 2·3 과 같은 값, 961/965 배정은 가정)
     SELECT '961' CORN_CD, '04077090' SHED_CD FROM DUAL UNION ALL
     SELECT '965',         '04077137'         FROM DUAL
 ),
 
--- ① 대상 빌 : 판매취소 아님 × 빌상태 01·02 × 상품위치 01·02·11·12
+-- ① 대상 빌 : 본점 · 판매취소 아님 × 빌상태 00·01·02 × 상품위치 01·02·11·12
 BILL AS (
     SELECT A.*, B.STOR_NM, B.BOND_GRN_CD, B.CSTM_CD, B.DEPT_CD, B.SEQ_PREFIX, B.DECL_TYPE, B.DELIV_METHOD
       FROM SA0100M A /* 영업_매출기본 */
@@ -72,8 +76,8 @@ BILL AS (
      WHERE A.COMP_CD = P.COMP_CD
        AND A.SALE_TYPE_CD = '1'
        AND A.SALE_DT <= P.BASE_DT
-       AND A.BILL_PROC_CLS_CD IN ('01', '02')                   -- 면장등록 / 면장확정
-       AND A.GOOS_LOC_CLS_CD  IN ('01', '02', '11', '12')       -- 점창고 / 통물창고 / 점미래보세 / 통물미래보세
+       AND A.BILL_PROC_CLS_CD IN ('00', '01', '02')             -- 매출 / 면장등록 / 면장확정
+       AND A.GOOS_LOC_CLS_CD  IN ('01', '02', '11', '12')       -- 점포(점창고) / 통물 / 점미래보세 / 통물미래보세
        -- 판매취소가 아닌것 (다른 날 취소 포함)
        AND NOT EXISTS (SELECT 1 FROM SA0100M E
                         WHERE E.COMP_CD = A.COMP_CD
@@ -83,18 +87,26 @@ BILL AS (
                           AND E.SALE_DT <= P.BASE_DT)
 ),
 
--- 신고번호 : 보세구역별 빌 순번
+-- 우선순위 : 당일(신고일) 출국 1 / 이후 출국 2 / 출국일 지남·없음 3
+BILL_PRI AS (
+    SELECT B.*,
+           CASE WHEN B.DPAT_DT = P.DECL_DT THEN 1
+                WHEN B.DPAT_DT > P.DECL_DT THEN 2
+                ELSE 3 END PRIORITY
+      FROM BILL B CROSS JOIN PRM P
+),
+-- 신고번호 : 우선순위 → 출국일 → 매출일 순으로 일련번호
 BILL_NO_SEQ AS (
     SELECT B.*,
            B.CSTM_CD || B.DEPT_CD || B.BOND_GRN_CD || SUBSTR(P.DECL_DT, 3, 2) || 'C'
              || B.SEQ_PREFIX || LPAD(ROW_NUMBER() OVER (PARTITION BY B.BOND_GRN_CD
-                                                         ORDER BY B.SALE_DT, B.BILL_NO), 7, '0') DECLARATION_NO
-      FROM BILL B CROSS JOIN PRM P
+                                                         ORDER BY B.PRIORITY, B.DPAT_DT, B.SALE_DT, B.BILL_NO), 7, '0') DECLARATION_NO
+      FROM BILL_PRI B CROSS JOIN PRM P
 ),
 
 -- ② 품목 : 상품 + GWP
 LINES AS (
-    SELECT 'G' KIND, B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT,
+    SELECT 'G' KIND, B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT, B.PRIORITY,
            C.SEQ, C.GOOS_CD, C.AGIG_CD, C.GOOS_QTY QTY,
            C.NET_SELL_DOLR_AMT, C.NET_SELL_WON_AMT, C.SALE_DOLR_UCST, C.SALE_WON_UCST, C.DC_EVT_CD_1
       FROM BILL_NO_SEQ B, SA0103D C
@@ -102,7 +114,7 @@ LINES AS (
        AND C.POS_NO = B.POS_NO AND C.RCPT_NO = B.RCPT_NO
        AND NVL(C.SALE_CNCL_YN, 'N') = 'N'
     UNION ALL
-    SELECT 'W', B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT,
+    SELECT 'W', B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT, B.PRIORITY,
            G.SEQ, G.GOOS_CD, NULL, G.PMNT_QTY,
            0, 0, 0, 0, NULL
       FROM BILL_NO_SEQ B, SA0109D G
@@ -144,7 +156,7 @@ SELECT L.DECLARATION_NO                                            AS DECLARATIO
        NULL                                                        AS GWP_LINK_ITEM_CODE,   -- 24 GWP연계상품코드 (본품, [확인 2] 결과 보고)
        NULL                                                        AS QTY_UNIT_CODE,        -- 25 수량단위
        ----------------------------------------------- 참고 (적재 제외)
-       L.STOR_NM                                                   AS REF_STOR_NM,
+       L.PRIORITY                                                  AS REF_PRIORITY,
        L.BILL_NO                                                   AS REF_BILL_NO,
        DECODE(L.KIND, 'G', '상품', 'GWP')                           AS REF_GOOS_GWP,
        L.GOOS_CD                                                   AS REF_GOOS_CD
@@ -170,19 +182,16 @@ SELECT L.DECLARATION_NO                                            AS DECLARATIO
    ===================================================================== */
 WITH
 PRM AS (SELECT '01' COMP_CD, '20261130' BASE_DT, '20261201' DECL_DT FROM DUAL),
-BOND AS (                                    -- 판매점 ↔ 보세구역 + 신고구분·인도방법 (확인)
-    -- 신고구분: E 인도장 인도판매 / J 출국장면세점 인도판매     인도방법: E 출국장인도장 / A 현장인도
-    SELECT '05' STOR_CD, '본점'   STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX,
-           'E' DECL_TYPE, 'E' DELIV_METHOD FROM DUAL UNION ALL
-    SELECT '15', 'T1-DF4', '04021040', '040', '21', '?', 'J', 'A' FROM DUAL UNION ALL
-    SELECT '17', 'T2-DF4', '04021041', '040', '21', '?', 'J', 'A' FROM DUAL
+BOND AS (                                    -- 본점만 (신고구분 E 인도장 인도판매 / 인도방법 E 출국장인도장 — 확인)
+    SELECT '05' STOR_CD, '본점' STOR_NM, '01022006' BOND_GRN_CD, '010' CSTM_CD, '22' DEPT_CD, '?' SEQ_PREFIX,
+           'E' DECL_TYPE, 'E' DELIV_METHOD FROM DUAL
 ),
 TONG AS (                                    -- 통물 코너 → 통물 장치장 (재고 STEP 2·3 과 같은 값, 961/965 배정은 가정)
     SELECT '961' CORN_CD, '04077090' SHED_CD FROM DUAL UNION ALL
     SELECT '965',         '04077137'         FROM DUAL
 ),
 
--- ① 대상 빌 : 판매취소 아님 × 빌상태 01·02 × 상품위치 01·02·11·12
+-- ① 대상 빌 : 본점 · 판매취소 아님 × 빌상태 00·01·02 × 상품위치 01·02·11·12
 BILL AS (
     SELECT A.*, B.STOR_NM, B.BOND_GRN_CD, B.CSTM_CD, B.DEPT_CD, B.SEQ_PREFIX, B.DECL_TYPE, B.DELIV_METHOD
       FROM SA0100M A /* 영업_매출기본 */
@@ -191,8 +200,8 @@ BILL AS (
      WHERE A.COMP_CD = P.COMP_CD
        AND A.SALE_TYPE_CD = '1'
        AND A.SALE_DT <= P.BASE_DT
-       AND A.BILL_PROC_CLS_CD IN ('01', '02')                   -- 면장등록 / 면장확정
-       AND A.GOOS_LOC_CLS_CD  IN ('01', '02', '11', '12')       -- 점창고 / 통물창고 / 점미래보세 / 통물미래보세
+       AND A.BILL_PROC_CLS_CD IN ('00', '01', '02')             -- 매출 / 면장등록 / 면장확정
+       AND A.GOOS_LOC_CLS_CD  IN ('01', '02', '11', '12')       -- 점포(점창고) / 통물 / 점미래보세 / 통물미래보세
        -- 판매취소가 아닌것 (다른 날 취소 포함)
        AND NOT EXISTS (SELECT 1 FROM SA0100M E
                         WHERE E.COMP_CD = A.COMP_CD
@@ -202,18 +211,26 @@ BILL AS (
                           AND E.SALE_DT <= P.BASE_DT)
 ),
 
--- 신고번호 : 보세구역별 빌 순번
+-- 우선순위 : 당일(신고일) 출국 1 / 이후 출국 2 / 출국일 지남·없음 3
+BILL_PRI AS (
+    SELECT B.*,
+           CASE WHEN B.DPAT_DT = P.DECL_DT THEN 1
+                WHEN B.DPAT_DT > P.DECL_DT THEN 2
+                ELSE 3 END PRIORITY
+      FROM BILL B CROSS JOIN PRM P
+),
+-- 신고번호 : 우선순위 → 출국일 → 매출일 순으로 일련번호
 BILL_NO_SEQ AS (
     SELECT B.*,
            B.CSTM_CD || B.DEPT_CD || B.BOND_GRN_CD || SUBSTR(P.DECL_DT, 3, 2) || 'C'
              || B.SEQ_PREFIX || LPAD(ROW_NUMBER() OVER (PARTITION BY B.BOND_GRN_CD
-                                                         ORDER BY B.SALE_DT, B.BILL_NO), 7, '0') DECLARATION_NO
-      FROM BILL B CROSS JOIN PRM P
+                                                         ORDER BY B.PRIORITY, B.DPAT_DT, B.SALE_DT, B.BILL_NO), 7, '0') DECLARATION_NO
+      FROM BILL_PRI B CROSS JOIN PRM P
 ),
 
 -- ② 품목 : 상품 + GWP
 LINES AS (
-    SELECT 'G' KIND, B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT,
+    SELECT 'G' KIND, B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT, B.PRIORITY,
            C.SEQ, C.GOOS_CD, C.AGIG_CD, C.GOOS_QTY QTY,
            C.NET_SELL_DOLR_AMT, C.NET_SELL_WON_AMT, C.SALE_DOLR_UCST, C.SALE_WON_UCST, C.DC_EVT_CD_1
       FROM BILL_NO_SEQ B, SA0103D C
@@ -221,7 +238,7 @@ LINES AS (
        AND C.POS_NO = B.POS_NO AND C.RCPT_NO = B.RCPT_NO
        AND NVL(C.SALE_CNCL_YN, 'N') = 'N'
     UNION ALL
-    SELECT 'W', B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT,
+    SELECT 'W', B.DECLARATION_NO, B.BOND_GRN_CD, B.STOR_NM, B.BILL_NO, B.SALE_DT, B.PRIORITY,
            G.SEQ, G.GOOS_CD, NULL, G.PMNT_QTY,
            0, 0, 0, 0, NULL
       FROM BILL_NO_SEQ B, SA0109D G
@@ -255,7 +272,7 @@ SELECT B.DECLARATION_NO                                            AS DECLARATIO
        CASE WHEN B.SALE_CRS_CLS_CD = 'OFF' THEN 'N' ELSE 'Y' END   AS ELECTRONIC_COMMERCE_YN, -- 23 전자상거래 여부
        CASE WHEN B.GOOS_LOC_CLS_CD IN ('02', '12') THEN T.SHED_CD END AS CARRYOUT_LOC,        -- 24 반출장치장소 (통물이면 통물 장치장)
        ----------------------------------------------- 참고 (적재 제외)
-       B.STOR_NM                                                   AS REF_STOR_NM,
+       B.PRIORITY                                                  AS REF_PRIORITY,           -- 1 당일출국 / 2 이후 / 3 지남·없음
        B.BILL_PROC_CLS_CD                                          AS REF_BILL_STAT,
        B.GOOS_LOC_CLS_CD                                           AS REF_GOOS_LOC,
        B.NATI_CD                                                   AS REF_NATI_CD,
