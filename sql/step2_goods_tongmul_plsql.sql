@@ -50,37 +50,6 @@ DECLARE
         SELECT '961' AS CORN_CD, '04077090' AS SHED_CD FROM DUAL UNION ALL      -- 제2 통합물류센터
         SELECT '965' AS CORN_CD, '04077137' AS SHED_CD FROM DUAL                -- 은산 통합물류센터
     ),
-    -- 판매취소 아닌 상품 매출 라인
-    SALE AS (
-        SELECT A.COMP_CD
-             , A.STOR_CD
-             , A.BILL_NO
-             , A.BILL_PROC_CLS_CD
-             , A.GOOS_LOC_CLS_CD
-             , NVL(C.STOC_STOR_CD, A.STOC_STOR_CD) AS STOC_STOR_CD          -- 재고가 빠지는 점
-             , NVL(C.STOC_CORN_CD, A.STOC_CORN_CD) AS STOC_CORN_CD          -- 재고가 빠지는 코너
-             , C.GOOS_CD
-             , C.AGIG_CD
-             , C.GOOS_QTY                          AS QTY
-          FROM SA0100M A
-             , SA0103D C
-         WHERE A.COMP_CD      = C.COMP_CD
-           AND A.STOR_CD      = C.STOR_CD
-           AND A.SALE_DT      = C.SALE_DT
-           AND A.POS_NO       = C.POS_NO
-           AND A.RCPT_NO      = C.RCPT_NO
-           AND A.COMP_CD      = '01'
-           AND A.SALE_TYPE_CD = '1'
-           AND A.SALE_DT     <= V_BASE_DT
-           AND NVL(C.SALE_CNCL_YN, 'N') = 'N'
-           AND NOT EXISTS (SELECT 1
-                             FROM SA0100M E
-                            WHERE E.COMP_CD       = A.COMP_CD
-                              AND E.STOR_CD       = A.STOR_CD
-                              AND E.BILL_NO       = A.BILL_NO
-                              AND E.SALE_TYPE_CD != A.SALE_TYPE_CD
-                              AND E.SALE_DT      <= V_BASE_DT)
-    ),
     -- H신고 재반입면장 교환권 빌
     H_BILL AS (
         SELECT BD.COMP_CD
@@ -138,6 +107,58 @@ DECLARE
            AND BM.COMP_CD           = '01'
            AND IM.EDI_RPT_DT       <= V_BASE_DT
          GROUP BY BD.COMP_CD, BD.STOR_CD, BD.BILL_NO
+    ),
+    -- ① 필요한 빌만 : 교환권 상태 빌 + H재반입 빌 + 미인도 빌  (튜닝: 매출 전체 이력 대신)
+    SALE_KEY AS (
+        SELECT /*+ FULL(A) PARALLEL(A 4) */                          -- 빌상태·상품위치 인덱스 없음 → FULL + 병렬 (DBA 허용 시)
+               A.COMP_CD, A.STOR_CD, A.SALE_DT, A.POS_NO, A.RCPT_NO, A.BILL_NO
+             , A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD, A.STOC_STOR_CD, A.STOC_CORN_CD, A.SALE_TYPE_CD
+          FROM SA0100M A
+         WHERE A.COMP_CD      = '01'
+           AND A.SALE_TYPE_CD = '1'
+           AND A.SALE_DT     <= V_BASE_DT
+        -- AND A.SALE_DT     >= :MIN_DT                              -- 남은 교환권 최소 매출일 확인 후 하한 (선택)
+           AND (A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD) IN (('00','02'), ('00','12'), ('01','12'))
+        UNION
+        SELECT A.COMP_CD, A.STOR_CD, A.SALE_DT, A.POS_NO, A.RCPT_NO, A.BILL_NO
+             , A.BILL_PROC_CLS_CD, A.GOOS_LOC_CLS_CD, A.STOC_STOR_CD, A.STOC_CORN_CD, A.SALE_TYPE_CD
+          FROM SA0100M A
+          JOIN (SELECT COMP_CD, STOR_CD, BILL_NO FROM H_BILL
+                UNION
+                SELECT COMP_CD, STOR_CD, BILL_NO FROM U_BILL) K
+            ON K.COMP_CD = A.COMP_CD
+           AND K.STOR_CD = A.STOR_CD
+           AND K.BILL_NO = A.BILL_NO
+         WHERE A.SALE_TYPE_CD = '1'
+           AND A.SALE_DT     <= V_BASE_DT
+    ),
+    -- ② 판매취소 아닌 것만 + 라인
+    SALE AS (
+        SELECT A.COMP_CD
+             , A.STOR_CD
+             , A.BILL_NO
+             , A.BILL_PROC_CLS_CD
+             , A.GOOS_LOC_CLS_CD
+             , NVL(C.STOC_STOR_CD, A.STOC_STOR_CD) AS STOC_STOR_CD
+             , NVL(C.STOC_CORN_CD, A.STOC_CORN_CD) AS STOC_CORN_CD
+             , C.GOOS_CD
+             , C.AGIG_CD
+             , C.GOOS_QTY                          AS QTY
+          FROM SALE_KEY A
+             , SA0103D C
+         WHERE A.COMP_CD = C.COMP_CD
+           AND A.STOR_CD = C.STOR_CD
+           AND A.SALE_DT = C.SALE_DT
+           AND A.POS_NO  = C.POS_NO
+           AND A.RCPT_NO = C.RCPT_NO
+           AND NVL(C.SALE_CNCL_YN, 'N') = 'N'
+           AND NOT EXISTS (SELECT 1
+                             FROM SA0100M E
+                            WHERE E.COMP_CD       = A.COMP_CD
+                              AND E.STOR_CD       = A.STOR_CD
+                              AND E.BILL_NO       = A.BILL_NO
+                              AND E.SALE_TYPE_CD != A.SALE_TYPE_CD
+                              AND E.SALE_DT      <= V_BASE_DT)
     ),
     UDLV AS (
         SELECT NVL(U.ARRV_BOND, B.BOND_GRN_CD)                       AS WH_CODE
